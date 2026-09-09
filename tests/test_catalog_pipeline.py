@@ -1,8 +1,14 @@
 import unittest
 from datetime import datetime, timezone
+from email.message import Message
+from io import BytesIO
 import json
 from pathlib import Path
 import tempfile
+from unittest.mock import patch
+from urllib.error import HTTPError
+from urllib.request import BaseHandler, build_opener
+from urllib.response import addinfourl
 
 from app.catalog_types import SourceAchievement, steam_source_records
 from app.catalog_merge import merge_catalog
@@ -12,7 +18,12 @@ from app.catalog_store import (
     publish_catalog,
     validate_catalog,
 )
-from app.catalog_update import update_achievement_catalog
+from app.catalog_update import (
+    apply_icon_cache,
+    cache_icon,
+    huiji_records_from_previous_catalog,
+    update_achievement_catalog,
+)
 from app.readers.steam_stats import AchievementDefinition
 
 
@@ -206,6 +217,132 @@ class CatalogStoreTests(unittest.TestCase):
 
 
 class CatalogUpdateTests(unittest.TestCase):
+    def test_huiji_fallback_preserves_provenance_for_each_retained_field(self):
+        previous = {
+            "schema_version": 2,
+            "achievements": [{
+                "id": 1,
+                "display": {
+                    "name_zh": "抹大拉",
+                    "unlock_condition_zh": "同时拥有七个心之容器。",
+                },
+                "sources": {
+                    "display.name_zh": [{
+                        "source": "huiji",
+                        "source_url": "https://huiji.example/name",
+                        "retrieved_at": "2026-09-07T01:00:00+00:00",
+                        "value": "抹大拉",
+                    }],
+                    "display.unlock_condition_zh": [{
+                        "source": "huiji",
+                        "source_url": "https://huiji.example/condition",
+                        "retrieved_at": "2026-09-08T02:00:00+00:00",
+                        "value": "同时拥有七个心之容器。",
+                    }],
+                },
+            }],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            active = Path(directory) / "achievements.json"
+            active.write_text(
+                json.dumps(previous, ensure_ascii=False), encoding="utf-8"
+            )
+            huiji = huiji_records_from_previous_catalog(active)
+
+        payload = merge_catalog(
+            steam={1: SourceAchievement(
+                id=1,
+                source="steam_schema",
+                source_url=None,
+                retrieved_at=None,
+                values={
+                    "steam_name": "1",
+                    "name_en": "Magdalene",
+                    "steam_group": 1,
+                    "steam_bit": 0,
+                },
+            )},
+            wiki={1: source(
+                1,
+                "wiki_gg",
+                unlock_condition_en="Have seven heart containers",
+            )},
+            huiji=huiji,
+            generated_at="2026-09-09T00:00:00+00:00",
+            secret_count=1,
+        )
+        sources = payload["achievements"][0]["sources"]
+        self.assertEqual(sources["display.name_zh"][0]["source_url"],
+                         "https://huiji.example/name")
+        self.assertEqual(sources["display.name_zh"][0]["retrieved_at"],
+                         "2026-09-07T01:00:00+00:00")
+        self.assertEqual(sources["display.unlock_condition_zh"][0]["source_url"],
+                         "https://huiji.example/condition")
+        self.assertEqual(sources["display.unlock_condition_zh"][0]["retrieved_at"],
+                         "2026-09-08T02:00:00+00:00")
+
+    def test_icon_cache_rejects_https_to_http_redirect_before_following_it(self):
+        http_requests: list[str] = []
+
+        class RedirectTransport(BaseHandler):
+            handler_order = 100
+
+            def https_open(self, request):
+                headers = Message()
+                headers["Location"] = "http://unsafe.example/icon.jpg"
+                response = addinfourl(
+                    BytesIO(b""), headers, request.full_url, code=302
+                )
+                response.msg = "Found"
+                return response
+
+            def http_open(self, request):
+                http_requests.append(request.full_url)
+                raise AssertionError("HTTP redirect request was issued")
+
+        transport = RedirectTransport()
+
+        with tempfile.TemporaryDirectory() as directory:
+            destination = Path(directory) / "1.jpg"
+            with (
+                patch(
+                    "app.catalog_update.build_opener",
+                    side_effect=lambda *handlers: build_opener(
+                        transport, *handlers
+                    ),
+                ),
+                self.assertRaises(HTTPError),
+            ):
+                cache_icon("https://safe.example/icon.jpg", destination)
+            self.assertFalse(destination.exists())
+
+        self.assertEqual(http_requests, [])
+
+    def test_icon_cache_resolves_real_steam_hash_filename(self):
+        icon_hash = "a36d7e92df7e991758907a75dfa55d36b52548c4.jpg"
+        payload = {
+            "achievements": [{"id": 1, "icon": {"unlocked": icon_hash}}]
+        }
+        cached_urls: list[str] = []
+
+        def cache(url: str, destination: Path) -> bool:
+            cached_urls.append(url)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            destination.write_bytes(b"image")
+            return True
+
+        with tempfile.TemporaryDirectory() as directory:
+            apply_icon_cache(payload, Path(directory), cache)
+
+        self.assertEqual(cached_urls, [
+            "https://shared.fastly.steamstatic.com/community_assets/images/"
+            "apps/250900/a36d7e92df7e991758907a75dfa55d36b52548c4.jpg"
+        ])
+        self.assertEqual(payload["achievements"][0]["icon"], {
+            "path": "assets/achievements/1.jpg",
+            "fallback": False,
+        })
+
     def test_update_uses_previous_chinese_fields_when_huiji_is_unavailable(self):
         definition = AchievementDefinition(
             1, 0, 1, "Magdalene", "Unlocked a character.", "", ""

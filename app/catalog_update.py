@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+import re
 from tempfile import NamedTemporaryFile
 from typing import Callable, Mapping
+from urllib.error import HTTPError
 from urllib.parse import urlsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 from .catalog_merge import merge_catalog
 from .catalog_store import load_catalog, nested_value, publish_catalog
@@ -22,7 +24,11 @@ from .wiki_catalog import fetch_wiki_achievements
 USER_AGENT = "IsaacHelper/0.1 catalog maintenance"
 MAX_ICON_BYTES = 2 * 1024 * 1024
 FALLBACK_ICON_PATH = "assets/achievements/fallback.svg"
+STEAM_ICON_BASE_URL = (
+    "https://shared.fastly.steamstatic.com/community_assets/images/apps/250900"
+)
 _ICON_SUFFIXES = {".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"}
+_STEAM_ICON_FILENAME = re.compile(r"[0-9a-f]{40}\.(?:jpeg|jpg|png)", re.IGNORECASE)
 _HUIJI_FIELDS = {
     "display.name_en": "name_en",
     "display.name_zh": "name_zh",
@@ -30,6 +36,21 @@ _HUIJI_FIELDS = {
     "reward.name_zh": "reward_name_zh",
     "dlc": "dlc",
 }
+
+
+class _HttpsOnlyRedirectHandler(HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, message, headers, new_url):
+        if urlsplit(new_url).scheme != "https":
+            raise HTTPError(
+                request.full_url,
+                code,
+                f"refusing redirect to non-HTTPS URL: {new_url}",
+                headers,
+                fp,
+            )
+        return super().redirect_request(
+            request, fp, code, message, headers, new_url
+        )
 
 
 @dataclass(frozen=True)
@@ -68,7 +89,8 @@ def cache_icon(url: str, destination: Path, *, timeout: float = 15.0) -> bool:
     if urlsplit(url).scheme != "https":
         return False
     request = Request(url, headers={"User-Agent": USER_AGENT})
-    with urlopen(request, timeout=timeout) as response:
+    opener = build_opener(_HttpsOnlyRedirectHandler())
+    with opener.open(request, timeout=timeout) as response:
         if not response.headers.get_content_type().startswith("image/"):
             return False
         body = response.read(MAX_ICON_BYTES + 1)
@@ -104,6 +126,7 @@ def huiji_records_from_previous_catalog(
             continue
 
         values: dict[str, object] = {}
+        field_provenance: dict[str, dict[str, object]] = {}
         source_url: str | None = None
         retrieved_at: str | None = None
         for catalog_field, source_field in _HUIJI_FIELDS.items():
@@ -124,8 +147,12 @@ def huiji_records_from_previous_catalog(
             if value in (None, ""):
                 continue
             values[source_field] = value
+            candidate_url = provenance.get("source_url") or provenance.get("url")
+            field_provenance[source_field] = {
+                "source_url": candidate_url,
+                "retrieved_at": provenance.get("retrieved_at"),
+            }
             if source_url is None:
-                candidate_url = provenance.get("source_url") or provenance.get("url")
                 if isinstance(candidate_url, str):
                     source_url = candidate_url
             if retrieved_at is None and isinstance(provenance.get("retrieved_at"), str):
@@ -138,6 +165,7 @@ def huiji_records_from_previous_catalog(
                 source_url=source_url,
                 retrieved_at=retrieved_at,
                 values=values,
+                field_provenance=field_provenance,
             )
     return records
 
@@ -147,6 +175,15 @@ def _icon_filename(achievement_id: int, url: str) -> str:
     if suffix not in _ICON_SUFFIXES:
         suffix = ".jpg"
     return f"{achievement_id}{suffix}"
+
+
+def _resolve_icon_url(reference: str) -> str | None:
+    parsed = urlsplit(reference)
+    if parsed.scheme == "https" and parsed.netloc:
+        return reference
+    if _STEAM_ICON_FILENAME.fullmatch(reference):
+        return f"{STEAM_ICON_BASE_URL}/{reference}"
+    return None
 
 
 def apply_icon_cache(
@@ -164,10 +201,15 @@ def apply_icon_cache(
             raise ValueError("catalog achievement must be an object")
         achievement_id = record.get("id")
         icon = record.get("icon")
-        remote_url = icon.get("unlocked") if isinstance(icon, Mapping) else None
+        icon_reference = icon.get("unlocked") if isinstance(icon, Mapping) else None
         cached = False
         filename = ""
-        if isinstance(achievement_id, int) and isinstance(remote_url, str) and remote_url:
+        remote_url = (
+            _resolve_icon_url(icon_reference)
+            if isinstance(icon_reference, str)
+            else None
+        )
+        if isinstance(achievement_id, int) and remote_url:
             filename = _icon_filename(achievement_id, remote_url)
             try:
                 cached = icon_cacher(remote_url, icons_dir / filename)

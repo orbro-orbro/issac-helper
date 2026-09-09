@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from .readers.steam_stats import AchievementDefinition
@@ -15,6 +15,9 @@ class SourceAchievement:
     source_url: str | None
     retrieved_at: str | None
     values: Mapping[str, object]
+    field_provenance: Mapping[str, Mapping[str, object]] = field(
+        default_factory=dict
+    )
 
 
 def steam_source_records(

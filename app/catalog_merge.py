@@ -13,36 +13,64 @@ def _has_value(value: object) -> bool:
     return value is not None and value != ""
 
 
-def _source_entry(item: SourceAchievement, value: object) -> dict[str, object]:
+FieldCandidate = (
+    tuple[SourceAchievement, object]
+    | tuple[SourceAchievement, object, str]
+)
+
+
+def _source_entry(
+    item: SourceAchievement,
+    value: object,
+    source_field: str | None = None,
+) -> dict[str, object]:
+    field_provenance = (
+        item.field_provenance.get(source_field, {})
+        if source_field is not None
+        else {}
+    )
+    source_url = field_provenance.get("source_url", item.source_url)
+    retrieved_at = field_provenance.get("retrieved_at", item.retrieved_at)
     entry: dict[str, object] = {
         "source": item.source,
-        "source_url": item.source_url,
-        "retrieved_at": item.retrieved_at,
+        "source_url": source_url,
+        "retrieved_at": retrieved_at,
         "value": value,
     }
-    if item.source == "steam_schema" and not item.source_url:
+    origin = field_provenance.get("origin")
+    if origin:
+        entry["origin"] = origin
+    elif item.source == "steam_schema" and not source_url:
         entry["origin"] = "local_steam_schema"
     return entry
 
 
 def choose_field(
     field: str,
-    candidates: Sequence[tuple[SourceAchievement, object]],
+    candidates: Sequence[FieldCandidate],
 ) -> tuple[object | None, list[dict[str, object]], list[dict[str, object]]]:
     """Return selected value, provenance entries, and conflicting alternatives."""
 
-    present = [(item, value) for item, value in candidates if _has_value(value)]
+    normalized = [
+        (candidate[0], candidate[1], candidate[2] if len(candidate) == 3 else None)
+        for candidate in candidates
+    ]
+    present = [
+        (item, value, source_field)
+        for item, value, source_field in normalized
+        if _has_value(value)
+    ]
     if not present:
         return None, [], []
     selected = present[0][1]
     provenance = [
-        _source_entry(item, value)
-        for item, value in present
+        _source_entry(item, value, source_field)
+        for item, value, source_field in present
         if value == selected
     ]
     conflicts = [
-        {"field": field, **_source_entry(item, value)}
-        for item, value in present
+        {"field": field, **_source_entry(item, value, source_field)}
+        for item, value, source_field in present
         if value != selected
     ]
     return selected, provenance, conflicts
@@ -51,10 +79,10 @@ def choose_field(
 def _candidate(
     item: SourceAchievement | None,
     key: str,
-) -> list[tuple[SourceAchievement, object]]:
+) -> list[FieldCandidate]:
     if item is None:
         return []
-    return [(item, item.values.get(key))]
+    return [(item, item.values.get(key), key)]
 
 
 def _secret_mapping(
@@ -114,7 +142,7 @@ def merge_catalog(
 
         def select(
             field: str,
-            candidates: Sequence[tuple[SourceAchievement, object]],
+            candidates: Sequence[FieldCandidate],
         ) -> object | None:
             value, provenance, alternatives = choose_field(field, candidates)
             if provenance:
