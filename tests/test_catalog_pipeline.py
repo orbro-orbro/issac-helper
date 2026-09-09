@@ -1,10 +1,19 @@
 import unittest
+from datetime import datetime, timezone
+import json
 from pathlib import Path
 import tempfile
 
-from app.catalog_types import SourceAchievement
+from app.catalog_types import SourceAchievement, steam_source_records
 from app.catalog_merge import merge_catalog
-from app.catalog_store import CatalogValidationError, publish_catalog, validate_catalog
+from app.catalog_store import (
+    CatalogValidationError,
+    load_catalog,
+    publish_catalog,
+    validate_catalog,
+)
+from app.catalog_update import update_achievement_catalog
+from app.readers.steam_stats import AchievementDefinition
 
 
 def source(achievement_id: int, source_name: str, **values) -> SourceAchievement:
@@ -68,7 +77,18 @@ def catalog_payload(items: list[dict[str, object]]) -> dict[str, object]:
 class CatalogMergeTests(unittest.TestCase):
     def test_merge_applies_precedence_and_records_field_sources(self):
         payload = merge_catalog(
-            steam={20: source(20, "steam_schema", steam_name="20", name_en="The Relic", steam_group=1, steam_bit=19)},
+            steam={20: SourceAchievement(
+                id=20,
+                source="steam_schema",
+                source_url=None,
+                retrieved_at=None,
+                values={
+                    "steam_name": "20",
+                    "name_en": "The Relic",
+                    "steam_group": 1,
+                    "steam_bit": 19,
+                },
+            )},
             wiki={20: source(20, "wiki_gg", unlock_condition_en="Defeat Isaac as Magdalene", reward_name_en="The Relic")},
             huiji={20: source(20, "huiji", name_zh="圣遗物", unlock_condition_zh="用抹大拉获得以撒通关标记。", reward_name_zh="圣遗物", dlc="rebirth")},
             generated_at="2026-09-09T00:00:00+00:00",
@@ -78,6 +98,10 @@ class CatalogMergeTests(unittest.TestCase):
         self.assertEqual(item["display"]["unlock_condition_en"], "Defeat Isaac as Magdalene")
         self.assertEqual(item["secret"], {"id": 20, "status": "verified", "evidence": ["steam_schema", "wiki_gg", "huiji"]})
         self.assertEqual(item["sources"]["display.name_zh"][0]["source"], "huiji")
+        self.assertEqual(
+            item["sources"]["steam.name"][0]["origin"],
+            "local_steam_schema",
+        )
         self.assertEqual(item["characters"], [{"id": "magdalene", "relation": "required_character"}])
 
     def test_merge_keeps_conflict_instead_of_overwriting_it(self):
@@ -179,6 +203,63 @@ class CatalogStoreTests(unittest.TestCase):
                 publish_catalog(payload, target, expected_count=1)
 
             self.assertEqual(list(Path(directory).iterdir()), [])
+
+
+class CatalogUpdateTests(unittest.TestCase):
+    def test_update_uses_previous_chinese_fields_when_huiji_is_unavailable(self):
+        definition = AchievementDefinition(
+            1, 0, 1, "Magdalene", "Unlocked a character.", "", ""
+        )
+        old = merge_catalog(
+            steam_source_records([definition]),
+            {1: source(
+                1,
+                "wiki_gg",
+                unlock_condition_en="Have seven heart containers",
+            )},
+            {1: source(
+                1,
+                "huiji",
+                name_zh="抹大拉",
+                unlock_condition_zh="同时拥有七个心之容器。",
+            )},
+            generated_at="2026-09-08T00:00:00+00:00",
+            secret_count=1,
+        )
+        old["achievements"][0]["icon"] = {
+            "path": "assets/achievements/fallback.svg",
+            "fallback": True,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            active = root / "achievements.json"
+            icons = root / "web" / "assets" / "achievements"
+            icons.mkdir(parents=True)
+            (icons / "fallback.svg").write_text(
+                "<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8"
+            )
+            active.write_text(json.dumps(old, ensure_ascii=False), encoding="utf-8")
+            result = update_achievement_catalog(
+                schema_path=root / "schema.bin",
+                catalog_path=active,
+                icons_dir=icons,
+                schema_reader=lambda _: [definition],
+                wiki_fetcher=lambda: {1: source(
+                    1,
+                    "wiki_gg",
+                    unlock_condition_en="Have seven heart containers",
+                )},
+                huiji_fetcher=lambda: (_ for _ in ()).throw(OSError("403")),
+                icon_cacher=lambda url, destination: False,
+                now=lambda: datetime(2026, 9, 9, tzinfo=timezone.utc),
+                expected_count=1,
+            )
+            self.assertTrue(result.ok)
+            self.assertEqual(
+                load_catalog(active)["achievements"][0]["display"]["name_zh"],
+                "抹大拉",
+            )
+            self.assertTrue(any("Huiji" in item for item in result.warnings))
 
 
 if __name__ == "__main__":

@@ -14,12 +14,15 @@ def _has_value(value: object) -> bool:
 
 
 def _source_entry(item: SourceAchievement, value: object) -> dict[str, object]:
-    return {
+    entry: dict[str, object] = {
         "source": item.source,
         "source_url": item.source_url,
         "retrieved_at": item.retrieved_at,
         "value": value,
     }
+    if item.source == "steam_schema" and not item.source_url:
+        entry["origin"] = "local_steam_schema"
+    return entry
 
 
 def choose_field(
