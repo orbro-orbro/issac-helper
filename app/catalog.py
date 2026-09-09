@@ -114,7 +114,7 @@ def extract_character_relations(
         if (all_characters or (all_normal and not character["tainted"])):
             add(str(character["id"]), "related_character")
         elif any(
-            re.search(rf"\b(?:as|with)\s+{re.escape(alias)}(?:\b|$)", condition_text)
+            re.search(rf"\b(?:as|with)\s+{re.escape(alias)}(?!\w)", condition_text)
             for alias in aliases
         ):
             add(str(character["id"]), "required_character")

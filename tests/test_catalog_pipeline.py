@@ -40,6 +40,19 @@ class CatalogMergeTests(unittest.TestCase):
         self.assertEqual(item["display"]["name_en"], "Magdalene")
         self.assertEqual(item["conflicts"][0]["field"], "display.name_en")
 
+    def test_external_only_ids_are_diagnostic_not_canonical(self):
+        payload = merge_catalog(
+            steam={},
+            wiki={999: source(999, "wiki_gg", name_en="Future achievement")},
+            huiji={},
+            generated_at="2026-09-09T00:00:00+00:00",
+        )
+
+        self.assertEqual(payload["achievements"], [])
+        self.assertEqual(payload["diagnostics"]["external_only_ids"], [
+            {"id": 999, "sources": ["wiki_gg"]}
+        ])
+
 
 if __name__ == "__main__":
     unittest.main()

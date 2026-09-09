@@ -1,6 +1,6 @@
 import unittest
 
-from app.catalog import CHARACTERS
+from app.catalog import CHARACTERS, extract_character_relations
 from app.catalog_merge import merge_catalog
 from app.catalog_types import SourceAchievement
 
@@ -19,6 +19,18 @@ class CatalogTests(unittest.TestCase):
     def test_contains_all_normal_and_tainted_characters(self):
         self.assertEqual(len(CHARACTERS), 34)
         self.assertEqual(len({item["id"] for item in CHARACTERS}), 34)
+
+    def test_question_mark_character_aliases_match_before_punctuation(self):
+        cases = (
+            ("Defeat Isaac as ???.", "blue_baby"),
+            ("Defeat Isaac as Tainted ???.", "tainted_blue_baby"),
+        )
+        for condition, character_id in cases:
+            with self.subTest(condition=condition):
+                self.assertEqual(
+                    extract_character_relations("", condition),
+                    [{"id": character_id, "relation": "required_character"}],
+                )
 
     def test_normalized_record_retains_multiple_representative_categories(self):
         payload = merge_catalog(
