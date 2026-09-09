@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>Isaac Helper · 成就进度</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="topbar">
+    <a class="brand" href="#characters" aria-label="Isaac Helper 首页">
+      <span class="brand-mark" aria-hidden="true">I</span>
+      <span><strong>ISAAC HELPER</strong><small>本地成就档案</small></span>
+    </a>
+    <nav class="primary-nav" aria-label="主要导航">
+      <button type="button" data-view="characters">角色</button>
+      <button type="button" data-view="categories">分类</button>
+      <button type="button" data-view="all">全部成就</button>
+    </nav>
+    <div class="top-actions">
+      <span id="slot-status" class="slot-status">尚未读取</span>
+      <button class="update-button" id="open-update" type="button">更新数据</button>
+    </div>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <div id="app-status" class="app-status" role="status">正在读取本地目录…</div>
+    <div id="view" aria-live="polite"></div>
+  </main>
+
+  <dialog id="update-dialog" aria-labelledby="update-title">
+    <form id="update-form" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">只读同步</p>
+          <h2 id="update-title">更新本地进度</h2>
+        </div>
+        <button class="icon-button" type="button" id="close-update" aria-label="关闭">×</button>
+      </div>
+      <p class="dialog-copy">选择 Steam 账户和游戏存档。系统只读取原文件，结果保存在项目的本地数据目录。</p>
+      <div class="field">
+        <label for="account-select">Steam 账户</label>
+        <select id="account-select" name="account_id"></select>
+      </div>
+      <div class="field">
+        <label for="slot-select">游戏存档</label>
+        <select id="slot-select" name="slot"></select>
+      </div>
+      <div class="read-sources" aria-label="将读取的数据">
+        <span>Steam 成就缓存</span><span>Repentance+ 存档</span><span>Steam Schema</span>
+      </div>
+      <p id="update-status" class="dialog-status" role="status"></p>
+      <div class="dialog-actions">
+        <button type="button" class="quiet-button" id="cancel-update">取消</button>
+        <button type="submit" class="primary-button" id="run-update">读取并更新</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript><p class="noscript">此页面需要启用 JavaScript 才能读取和整理本地成就。</p></noscript>
+  <script src="app.js" defer></script>
+</body>
+</html>

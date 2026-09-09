@@ -7,6 +7,8 @@ AGENTS.md
 # Personal progress snapshots and raw game data
 data/profiles/
 data/raw/
+ResourceExtractor_log.txt
+ui-check*.png
 rep+persistentgamedata*.dat
 UserGameStats_*_250900.bin
 UserGameStatsSchema_250900.bin
