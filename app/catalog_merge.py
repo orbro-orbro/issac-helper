@@ -96,17 +96,11 @@ def merge_catalog(
     """Merge source records by numeric ID using explicit field precedence."""
 
     achievements: list[dict[str, object]] = []
-    external_only_ids = [
-        {
-            "id": achievement_id,
-            "sources": [
-                item.source
-                for item in (wiki.get(achievement_id), huiji.get(achievement_id))
-                if item is not None
-            ],
-        }
-        for achievement_id in sorted((set(wiki) | set(huiji)) - set(steam))
-    ]
+    canonical_ids = set(steam)
+    external_only_ids = {
+        "wiki_gg": sorted(set(wiki) - canonical_ids),
+        "huiji": sorted(set(huiji) - canonical_ids),
+    }
     for achievement_id in sorted(steam):
         steam_item = steam.get(achievement_id)
         wiki_item = wiki.get(achievement_id)
