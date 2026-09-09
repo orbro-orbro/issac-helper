@@ -41,6 +41,7 @@ _REQUIRED_FIELDS = (
 _SECRET_STATUSES = {"verified", "unverified", "conflict", "not_applicable"}
 _PROVENANCE_SOURCES = {"steam_schema", "wiki_gg", "huiji", "translated_wiki_gg"}
 _CHARACTER_IDS = {str(item["id"]) for item in CHARACTERS}
+_IDENTITY_FIELDS = ("id", "steam.name", "secret.id")
 
 
 def nested_value(record: Mapping[str, object], dotted: str) -> object | None:
@@ -54,16 +55,30 @@ def nested_value(record: Mapping[str, object], dotted: str) -> object | None:
     return current
 
 
-def _missing_fields(record: Mapping[str, object]) -> set[str]:
+def _missing_fields(
+    record: Mapping[str, object],
+    errors: list[str],
+    label: str,
+) -> set[str]:
     missing = record.get("missing", [])
     if not isinstance(missing, list):
+        errors.append(f"achievement {label}: missing must be a list")
         return set()
-    return {
-        field
-        for item in missing
-        if isinstance(item, Mapping)
-        and isinstance((field := item.get("field")), str)
-    }
+    valid_fields: set[str] = set()
+    for item in missing:
+        if not isinstance(item, Mapping):
+            errors.append(f"achievement {label}: missing entry must be an object")
+            continue
+        field = item.get("field")
+        reason = item.get("reason")
+        if not isinstance(field, str) or not field:
+            errors.append(f"achievement {label}: missing entry requires a field")
+            continue
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"achievement {label}: missing reason for {field}")
+            continue
+        valid_fields.add(field)
+    return valid_fields
 
 
 def _as_int(value: object) -> int | None:
@@ -125,7 +140,7 @@ def validate_catalog(
             else:
                 steam_keys.add(steam_key)
 
-        missing = _missing_fields(record)
+        missing = _missing_fields(record, errors, label)
         for field in _REQUIRED_FIELDS:
             if nested_value(record, field) not in (None, ""):
                 completeness[field] += 1
@@ -138,16 +153,21 @@ def validate_catalog(
         else:
             for relation in relations:
                 relation_id = relation.get("id") if isinstance(relation, Mapping) else None
-                if relation_id not in _CHARACTER_IDS:
+                if not isinstance(relation_id, str) or relation_id not in _CHARACTER_IDS:
                     errors.append(f"achievement {label}: unknown character {relation_id}")
 
         categories = record.get("categories", [])
         if not isinstance(categories, list):
             errors.append(f"achievement {label}: categories must be a list")
         else:
+            known_categories = 0
             for category in categories:
-                if category not in CATEGORY_DEFINITIONS:
+                if isinstance(category, str) and category in CATEGORY_DEFINITIONS:
+                    known_categories += 1
+                else:
                     errors.append(f"achievement {label}: unknown category {category}")
+            if not known_categories:
+                errors.append(f"achievement {label}: categories must include at least one registered category")
 
         secret = record.get("secret", {})
         secret_status = secret.get("status") if isinstance(secret, Mapping) else None
@@ -157,6 +177,20 @@ def validate_catalog(
             errors.append(f"achievement {label}: conflicting Secret identity")
         elif secret_status == "unverified":
             warnings.append(f"achievement {label}: unverified Secret mapping")
+        if secret_status == "verified" and (
+            not isinstance(secret, Mapping)
+            or _as_int(secret.get("id")) != achievement_id
+        ):
+            errors.append(f"achievement {label}: Secret id does not match achievement id")
+
+        conflicts = record.get("conflicts", [])
+        if not isinstance(conflicts, list):
+            errors.append(f"achievement {label}: conflicts must be a list")
+        else:
+            for conflict in conflicts:
+                field = conflict.get("field") if isinstance(conflict, Mapping) else None
+                if isinstance(field, str) and field in _IDENTITY_FIELDS:
+                    errors.append(f"achievement {label}: conflicting identity field {field}")
 
         icon = record.get("icon", {})
         icon_path_value = nested_value(record, "icon.path")
@@ -221,11 +255,11 @@ def publish_catalog(
     temporary: Path | None = None
     try:
         with NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as handle:
+            temporary = Path(handle.name)
             json.dump(payload, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
             handle.flush()
             os.fsync(handle.fileno())
-            temporary = Path(handle.name)
         temporary.replace(path)
         temporary = None
         return result

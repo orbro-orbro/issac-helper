@@ -131,6 +131,55 @@ class CatalogStoreTests(unittest.TestCase):
                 publish_catalog({"achievements": []}, target, expected_count=641)
             self.assertEqual(target.read_text(encoding="utf-8"), '{"version":"old"}')
 
+    def test_validator_requires_a_reason_for_missing_fields(self):
+        item = catalog_item(1)
+        item["display"]["name_en"] = ""
+        item["missing"] = [{"field": "display.name_en"}]
+
+        result = validate_catalog(catalog_payload([item]), expected_count=1)
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any("missing reason" in error for error in result.errors))
+
+    def test_validator_rejects_mismatched_or_conflicted_identity_fields(self):
+        item = catalog_item(1)
+        item["secret"]["id"] = 2
+        item["conflicts"] = [{"field": "steam.name"}]
+
+        result = validate_catalog(catalog_payload([item]), expected_count=1)
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any("Secret id" in error for error in result.errors))
+        self.assertTrue(any("conflicting identity field steam.name" in error for error in result.errors))
+
+    def test_validator_aggregates_malformed_relations_and_categories(self):
+        invalid_relation = catalog_item(1, characters=[{"id": [], "relation": "required_character"}])
+        invalid_category = catalog_item(2)
+        invalid_category["categories"] = [{}]
+        empty_categories = catalog_item(3)
+        empty_categories["categories"] = []
+
+        result = validate_catalog(
+            catalog_payload([invalid_relation, invalid_category, empty_categories]),
+            expected_count=3,
+        )
+
+        self.assertFalse(result.valid)
+        self.assertTrue(any("unknown character" in error for error in result.errors))
+        self.assertTrue(any("unknown category" in error for error in result.errors))
+        self.assertTrue(any("at least one registered category" in error for error in result.errors))
+
+    def test_failed_serialization_cleans_temporary_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "achievements.json"
+            payload = catalog_payload([catalog_item(1)])
+            payload["not_serializable"] = {1}
+
+            with self.assertRaises(TypeError):
+                publish_catalog(payload, target, expected_count=1)
+
+            self.assertEqual(list(Path(directory).iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
