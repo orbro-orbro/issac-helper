@@ -1,7 +1,10 @@
 import unittest
+from pathlib import Path
+import tempfile
 
 from app.catalog_types import SourceAchievement
 from app.catalog_merge import merge_catalog
+from app.catalog_store import CatalogValidationError, publish_catalog, validate_catalog
 
 
 def source(achievement_id: int, source_name: str, **values) -> SourceAchievement:
@@ -12,6 +15,54 @@ def source(achievement_id: int, source_name: str, **values) -> SourceAchievement
         retrieved_at="2026-09-09T00:00:00+00:00",
         values=values,
     )
+
+
+def catalog_item(achievement_id: int, *, characters=None) -> dict[str, object]:
+    return {
+        "id": achievement_id,
+        "steam": {
+            "group": 1,
+            "bit": achievement_id - 1,
+            "name": str(achievement_id),
+            "name_en": f"Name {achievement_id}",
+            "description_en": "Description",
+        },
+        "secret": {
+            "id": achievement_id,
+            "status": "verified",
+            "evidence": ["steam_schema", "wiki_gg", "huiji"],
+        },
+        "display": {
+            "name_zh": f"成就 {achievement_id}",
+            "name_en": f"Name {achievement_id}",
+            "unlock_condition_zh": "条件",
+            "unlock_condition_en": "Condition",
+        },
+        "reward": {"name_zh": "奖励", "name_en": "Reward", "type": "item"},
+        "characters": characters or [],
+        "categories": ["other"],
+        "dlc": "rebirth",
+        "icon": {"path": "assets/achievements/fallback.svg", "fallback": True},
+        "sources": {
+            "display.name_zh": [{
+                "source": "huiji",
+                "url": "https://example.test",
+                "retrieved_at": "2026-09-09T00:00:00+00:00",
+            }]
+        },
+        "conflicts": [],
+        "missing": [],
+    }
+
+
+def catalog_payload(items: list[dict[str, object]]) -> dict[str, object]:
+    return {
+        "schema_version": 2,
+        "generated_at": "2026-09-09T00:00:00+00:00",
+        "achievement_count": len(items),
+        "achievements": items,
+        "diagnostics": {},
+    }
 
 
 class CatalogMergeTests(unittest.TestCase):
@@ -59,6 +110,26 @@ class CatalogMergeTests(unittest.TestCase):
             "wiki_gg": [997, 999],
             "huiji": [996, 998],
         })
+
+
+class CatalogStoreTests(unittest.TestCase):
+    def test_validator_rejects_duplicate_ids_and_bad_character_reference(self):
+        payload = catalog_payload([
+            catalog_item(1, characters=[{"id": "not-a-character", "relation": "required_character"}]),
+            catalog_item(1),
+        ])
+        result = validate_catalog(payload, expected_count=2)
+        self.assertFalse(result.valid)
+        self.assertTrue(any("duplicate achievement id 1" in item for item in result.errors))
+        self.assertTrue(any("not-a-character" in item for item in result.errors))
+
+    def test_failed_publication_preserves_previous_catalog(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "achievements.json"
+            target.write_text('{"version":"old"}', encoding="utf-8")
+            with self.assertRaises(CatalogValidationError):
+                publish_catalog({"achievements": []}, target, expected_count=641)
+            self.assertEqual(target.read_text(encoding="utf-8"), '{"version":"old"}')
 
 
 if __name__ == "__main__":
