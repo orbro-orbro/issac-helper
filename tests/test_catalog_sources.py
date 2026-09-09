@@ -24,12 +24,13 @@ class CatalogSourceTests(unittest.TestCase):
     def test_huiji_tabx_maps_columns_by_schema_name_not_position(self):
         payload = {
             "schema": {"fields": [
-                {"name": "ID"}, {"name": "NameZH"}, {"name": "NameEN"},
-                {"name": "UnlockReq"}, {"name": "Reward"}, {"name": "DLC"},
+                {"name": "id"}, {"name": "NameZH"}, {"name": "NameEN"},
+                {"name": "UnlockReq"}, {"name": "bonus"}, {"name": "source"},
             ]},
             "data": [[20, "圣遗物", "The Relic", "用{{chara|抹大拉}}获得以撒通关标记。", "{{item|ID=c98}}", "重生"]],
         }
         item = parse_huiji_tabx(payload, "2026-09-09T00:00:00+00:00")[20]
         self.assertEqual(item.values["name_zh"], "圣遗物")
         self.assertEqual(item.values["unlock_condition_zh"], "用抹大拉获得以撒通关标记。")
+        self.assertEqual(item.values["reward_zh"], "")
         self.assertEqual(item.values["dlc"], "rebirth")

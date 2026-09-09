@@ -27,7 +27,9 @@ _FIELD_NAMES = {
     "nameen": "name_en",
     "unlockreq": "unlock_condition_zh",
     "reward": "reward_zh",
+    "bonus": "reward_zh",
     "dlc": "dlc",
+    "source": "dlc",
 }
 
 
@@ -71,8 +73,9 @@ def parse_huiji_tabx(
         if not isinstance(field, Mapping) or not isinstance(field.get("name"), str):
             raise ValueError("Huiji achievement schema contains an invalid field")
         field_names.append(field["name"])
+    field_keys = [_field_key(name) for name in field_names]
     try:
-        id_index = field_names.index("ID")
+        id_index = field_keys.index("id")
     except ValueError as exc:
         raise ValueError("Huiji achievement schema has no ID field") from exc
 
