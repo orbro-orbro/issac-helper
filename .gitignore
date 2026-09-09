@@ -1,0 +1,26 @@
+# Local agent and design-session state
+.superpowers/
+.agents/
+.codex/
+AGENTS.md
+
+# Personal progress snapshots and raw game data
+data/profiles/
+data/raw/
+rep+persistentgamedata*.dat
+UserGameStats_*_250900.bin
+UserGameStatsSchema_250900.bin
+savedatapath.txt
+
+# Python runtime files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Local runtime and editor files
+*.log
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
