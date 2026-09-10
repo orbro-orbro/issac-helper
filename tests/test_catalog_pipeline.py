@@ -217,6 +217,109 @@ class CatalogStoreTests(unittest.TestCase):
 
 
 class CatalogUpdateTests(unittest.TestCase):
+    @staticmethod
+    def _definitions(count: int) -> list[AchievementDefinition]:
+        return [
+            AchievementDefinition(
+                1, achievement_id - 1, achievement_id,
+                f"Name {achievement_id}", "Description", "", "",
+            )
+            for achievement_id in range(1, count + 1)
+        ]
+
+    @staticmethod
+    def _wiki_records(count: int) -> dict[int, SourceAchievement]:
+        return {
+            achievement_id: source(
+                achievement_id,
+                "wiki_gg",
+                unlock_condition_en=f"Condition {achievement_id}",
+            )
+            for achievement_id in range(1, count + 1)
+        }
+
+    def test_update_rejects_incomplete_wiki_and_preserves_previous_catalog(self):
+        definitions = self._definitions(20)
+        complete_wiki = self._wiki_records(20)
+        mismatched_identity = dict(complete_wiki)
+        mismatched_identity[1] = source(
+            999, "wiki_gg", unlock_condition_en="Wrong achievement"
+        )
+        missing_mechanics = {
+            achievement_id: source(achievement_id, "wiki_gg")
+            for achievement_id in range(1, 21)
+        }
+        wiki_failures = {
+            "changed layout produced no rows": {},
+            "table was materially truncated": dict(list(complete_wiki.items())[:18]),
+            "row identity disagreed with its canonical key": mismatched_identity,
+            "unlock mechanics column was empty": missing_mechanics,
+        }
+
+        for label, wiki in wiki_failures.items():
+            with self.subTest(label=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                active = root / "achievements.json"
+                previous = json.dumps(
+                    catalog_payload([catalog_item(item.id) for item in definitions]),
+                    ensure_ascii=False,
+                )
+                active.write_text(previous, encoding="utf-8")
+                icons = root / "web" / "assets" / "achievements"
+                icons.mkdir(parents=True)
+                (icons / "fallback.svg").write_text(
+                    "<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8"
+                )
+
+                result = update_achievement_catalog(
+                    schema_path=root / "schema.bin",
+                    catalog_path=active,
+                    icons_dir=icons,
+                    schema_reader=lambda _: definitions,
+                    wiki_fetcher=lambda wiki=wiki: wiki,
+                    huiji_fetcher=lambda: {},
+                    icon_cacher=lambda url, destination: False,
+                    expected_count=20,
+                )
+
+                self.assertFalse(result.ok)
+                self.assertTrue(any(
+                    "wiki.gg source integrity" in error
+                    for error in result.errors
+                ))
+                self.assertEqual(active.read_text(encoding="utf-8"), previous)
+
+    def test_update_refuses_empty_wiki_on_first_run(self):
+        definition = self._definitions(1)[0]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            active = root / "achievements.json"
+            icons = root / "web" / "assets" / "achievements"
+            icons.mkdir(parents=True)
+            (icons / "fallback.svg").write_text(
+                "<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8"
+            )
+
+            result = update_achievement_catalog(
+                schema_path=root / "schema.bin",
+                catalog_path=active,
+                icons_dir=icons,
+                schema_reader=lambda _: [definition],
+                wiki_fetcher=lambda: {},
+                huiji_fetcher=lambda: {},
+                icon_cacher=lambda url, destination: False,
+                expected_count=1,
+            )
+
+            self.assertFalse(result.ok)
+            self.assertIsNone(result.updated_at)
+            self.assertEqual(result.achievement_count, 0)
+            self.assertTrue(any(
+                "wiki.gg source integrity" in error
+                for error in result.errors
+            ))
+            self.assertFalse(active.exists())
+
     def test_huiji_fallback_preserves_provenance_for_each_retained_field(self):
         previous = {
             "schema_version": 2,

@@ -29,6 +29,10 @@ STEAM_ICON_BASE_URL = (
 )
 _ICON_SUFFIXES = {".gif", ".jpeg", ".jpg", ".png", ".svg", ".webp"}
 _STEAM_ICON_FILENAME = re.compile(r"[0-9a-f]{40}\.(?:jpeg|jpg|png)", re.IGNORECASE)
+# The live catalog currently has wiki identity and English mechanics for all 641
+# Steam IDs. Requiring 95% still permits a small wiki lag after a game release,
+# while refusing layout/parser failures that would erase a material data slice.
+MIN_WIKI_COVERAGE_PERCENT = 95
 _HUIJI_FIELDS = {
     "display.name_en": "name_en",
     "display.name_zh": "name_zh",
@@ -61,6 +65,54 @@ class CatalogUpdateResult:
     completeness: Mapping[str, int]
     warnings: tuple[str, ...]
     errors: tuple[str, ...]
+
+
+def _validate_wiki_source_integrity(
+    steam: Mapping[int, SourceAchievement],
+    wiki: object,
+) -> None:
+    """Reject wiki output that cannot safely supply identity and mechanics."""
+
+    if not isinstance(wiki, Mapping):
+        raise ValueError("wiki.gg source integrity: result must be an ID mapping")
+
+    for key, record in wiki.items():
+        if (
+            not isinstance(key, int)
+            or isinstance(key, bool)
+            or not isinstance(record, SourceAchievement)
+            or record.id != key
+            or record.source != "wiki_gg"
+        ):
+            raise ValueError(
+                "wiki.gg source integrity: row identity/source disagrees with its ID key"
+            )
+
+    expected_ids = set(steam)
+    if not expected_ids:
+        return
+    minimum = (
+        len(expected_ids) * MIN_WIKI_COVERAGE_PERCENT + 99
+    ) // 100
+    covered_ids = expected_ids.intersection(wiki)
+    if len(covered_ids) < minimum:
+        raise ValueError(
+            "wiki.gg source integrity: canonical ID coverage "
+            f"{len(covered_ids)}/{len(expected_ids)} is below "
+            f"the {MIN_WIKI_COVERAGE_PERCENT}% safety floor"
+        )
+
+    mechanics_count = sum(
+        isinstance(wiki[achievement_id].values.get("unlock_condition_en"), str)
+        and bool(wiki[achievement_id].values["unlock_condition_en"].strip())
+        for achievement_id in covered_ids
+    )
+    if mechanics_count < minimum:
+        raise ValueError(
+            "wiki.gg source integrity: usable English unlock mechanics "
+            f"{mechanics_count}/{len(expected_ids)} is below "
+            f"the {MIN_WIKI_COVERAGE_PERCENT}% safety floor"
+        )
 
 
 def atomic_write_bytes(path: Path, body: bytes) -> None:
@@ -241,6 +293,7 @@ def update_achievement_catalog(
         generated_at = (now or (lambda: datetime.now(tz=timezone.utc)))().isoformat()
         steam = steam_source_records(schema_reader(schema_path))
         wiki = wiki_fetcher()
+        _validate_wiki_source_integrity(steam, wiki)
         try:
             huiji = huiji_fetcher()
         except Exception as error:
