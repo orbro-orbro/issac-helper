@@ -76,9 +76,13 @@ def load_snapshot(
 def merge_progress(
     catalog: Iterable[Mapping[str, object]],
     unlocked: Mapping[tuple[int, int], datetime | None],
-    secret_ids: Iterable[int],
-) -> tuple[list[dict[str, object]], dict[str, int], list[dict[str, object]]]:
-    secrets = set(secret_ids)
+    secret_ids: Iterable[int] | None,
+) -> tuple[
+    list[dict[str, object]],
+    dict[str, int | None],
+    list[dict[str, object]],
+]:
+    secrets = set(secret_ids) if secret_ids is not None else None
     items: list[dict[str, object]] = []
     differences: list[dict[str, object]] = []
     for source_item in catalog:
@@ -106,7 +110,9 @@ def merge_progress(
             else None
         )
         secret_unlocked = (
-            mapped_secret_id in secrets if mapped_secret_id is not None else None
+            mapped_secret_id in secrets
+            if mapped_secret_id is not None and secrets is not None
+            else None
         )
         unlocked_at = unlocked.get(steam_key) if steam_key is not None else None
         states_disagree = (
@@ -130,7 +136,7 @@ def merge_progress(
         "steam_unlocked": sum(
             bool(item["progress"]["steam_unlocked"]) for item in items
         ),
-        "game_secrets_unlocked": len(secrets),
+        "game_secrets_unlocked": len(secrets) if secrets is not None else None,
         "sync_difference_count": len(differences),
     }
     return items, summary, differences
@@ -184,7 +190,7 @@ def build_snapshot(
         for definition in definitions
         if definition.id in unlocked_by_id
     }
-    secret_ids: frozenset[int] = frozenset()
+    secret_ids: frozenset[int] | None = None
     secret_state: dict[str, object]
     try:
         secrets = parse_secrets(save_bytes)
@@ -199,7 +205,7 @@ def build_snapshot(
         secret_state = {
             "format": None,
             "count": None,
-            "unlocked_ids": [],
+            "unlocked_ids": None,
             "error": str(exc),
         }
 

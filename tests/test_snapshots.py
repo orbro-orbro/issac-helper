@@ -5,9 +5,12 @@ import tempfile
 import unittest
 from unittest import mock
 
+from app.discovery import AccountInfo, Selection, SlotInfo
+from app.readers.steam_stats import AchievementDefinition
 from app.snapshots import (
     SnapshotError,
     _read_stable,
+    build_snapshot,
     load_snapshot,
     merge_progress,
     snapshot_path,
@@ -16,6 +19,66 @@ from app.snapshots import (
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_secret_parse_failure_keeps_verified_secret_progress_unavailable(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            schema_path = root / "schema.bin"
+            stats_path = root / "stats.bin"
+            save_path = root / "rep+persistentgamedata1.dat"
+            schema_path.write_bytes(b"schema")
+            stats_path.write_bytes(b"stats")
+            save_path.write_bytes(b"unsupported save")
+            catalog_path = root / "achievements.json"
+            catalog = {
+                "schema_version": 2,
+                "generated_at": "2026-09-09T00:00:00+00:00",
+                "achievement_count": 1,
+                "achievements": [{
+                    "id": 1,
+                    "steam": {"group": 7, "bit": 2},
+                    "secret": {"id": 1, "status": "verified"},
+                }],
+                "diagnostics": {},
+            }
+            catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
+            modified_at = datetime(2026, 9, 10, tzinfo=timezone.utc)
+            slot = SlotInfo(1, save_path, modified_at, save_path.stat().st_size)
+            account = AccountInfo(
+                id="123",
+                steam_root=root,
+                stats_path=stats_path,
+                schema_path=schema_path,
+                game_dir=root / "game",
+                save_dir=root,
+                slots=(slot,),
+            )
+            definition = AchievementDefinition(
+                7, 2, 1, "Achievement", "Description", "", ""
+            )
+
+            with (
+                mock.patch("app.snapshots.parse_binary_keyvalues", return_value={}),
+                mock.patch("app.snapshots.extract_schema", return_value=[definition]),
+                mock.patch(
+                    "app.snapshots.extract_unlocked",
+                    return_value={1: modified_at},
+                ),
+            ):
+                payload = build_snapshot(
+                    Selection(account, slot),
+                    root / "profiles",
+                    catalog_path=catalog_path,
+                )
+
+            progress = payload["achievements"][0]["progress"]
+            self.assertTrue(progress["steam_unlocked"])
+            self.assertIsNone(progress["secret_unlocked"])
+            self.assertFalse(progress["sync_warning"])
+            self.assertIsNotNone(payload["game_secrets"]["error"])
+            self.assertIsNone(payload["summary"]["game_secrets_unlocked"])
+            self.assertEqual(payload["sync_differences"], [])
+            self.assertEqual(json.loads(catalog_path.read_text(encoding="utf-8")), catalog)
+
     def test_merge_keeps_steam_and_secret_states_separate(self):
         catalog = [
             {
