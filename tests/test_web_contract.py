@@ -61,13 +61,30 @@ class WebContractTests(unittest.TestCase):
 
         self.assertIn("display: block", rule)
 
-    def test_achievement_rows_prefer_actionable_unlock_condition(self):
+    def test_achievement_rows_prefer_nested_localized_metadata(self):
         script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "item.unlock_condition_zh || item.unlock_condition_en || item.description",
-            script,
-        )
+        self.assertIn("item.display.name_zh", script)
+        self.assertIn("item.display.name_en", script)
+        self.assertIn("item.display.unlock_condition_zh", script)
+        self.assertIn("item.display.unlock_condition_en", script)
+        self.assertIn("item.steam.description_en", script)
+
+    def test_exposes_separate_catalog_update_and_details(self):
+        buttons = self.attrs_for("button")
+        self.assertTrue(any(item.get("id") == "catalog-update" for item in buttons))
+        self.assertTrue(any(
+            item.get("id") == "achievement-details"
+            for item in self.attrs_for("dialog")
+        ))
+        self.assertTrue(any(
+            item.get("data-close-achievement") is not None
+            for item in buttons
+        ))
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn("/api/catalog/status", script)
+        self.assertIn("/api/catalog/update", script)
+        self.assertIn('body: "{}"', script)
 
     def test_achievement_copy_wraps_on_narrow_screens(self):
         stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
