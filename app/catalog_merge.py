@@ -185,7 +185,12 @@ def merge_catalog(
         steam_group = select("steam.group", _candidate(steam_item, "steam_group"))
         steam_bit = select("steam.bit", _candidate(steam_item, "steam_bit"))
 
-        relations = extract_character_relations(str(condition_zh or ""), str(condition_en or ""))
+        relations = extract_character_relations(
+            str(condition_zh or ""),
+            str(condition_en or ""),
+            str(name_en or ""),
+            str(description_en or ""),
+        )
         category_values = {
             "name_en": name_en,
             "name_zh": name_zh,

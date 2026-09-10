@@ -30,9 +30,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "magdalene",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {
@@ -175,9 +180,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "cain",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {
@@ -320,8 +330,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "judas",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "route_boss"
       ],
       "dlc": null,
@@ -4110,6 +4126,10 @@
       },
       "characters": [
         {
+          "id": "isaac",
+          "relation": "starting_item_for_character"
+        },
+        {
           "id": "blue_baby",
           "relation": "required_character"
         }
@@ -4550,8 +4570,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "blue_baby",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "route_boss"
       ],
       "dlc": null,
@@ -6007,8 +6033,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "eve",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "collection",
         "special_run"
       ],
@@ -9719,8 +9751,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "samson",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "special_run"
       ],
       "dlc": null,
@@ -11508,8 +11546,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "azazel",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "special_run"
       ],
       "dlc": null,
@@ -11653,9 +11697,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "lazarus",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {
@@ -11798,9 +11847,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "eden",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {
@@ -11943,9 +11997,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "lost",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {
@@ -29311,6 +29370,10 @@
         {
           "id": "azazel",
           "relation": "required_character"
+        },
+        {
+          "id": "lilith",
+          "relation": "unlocks_character"
         }
       ],
       "categories": [
@@ -37041,8 +37104,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "keeper",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "collection"
       ],
       "dlc": null,
@@ -50407,8 +50476,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "apollyon",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
+        "character",
         "route_boss"
       ],
       "dlc": null,
@@ -57670,9 +57745,14 @@
         "name_en": null,
         "name_zh": null
       },
-      "characters": [],
+      "characters": [
+        {
+          "id": "forgotten",
+          "relation": "unlocks_character"
+        }
+      ],
       "categories": [
-        "other"
+        "character"
       ],
       "dlc": null,
       "icon": {

@@ -85,10 +85,14 @@ def _contains(text: str, *phrases: str) -> bool:
 def extract_character_relations(
     condition_zh: str,
     condition_en: str,
+    name_en: str = "",
+    description_en: str = "",
 ) -> list[dict[str, str]]:
-    """Extract explicit character requirements from localized conditions."""
+    """Extract character relationships from retained achievement metadata."""
 
     condition_text = condition_en.casefold()
+    name_lower = name_en.casefold().strip()
+    description_text = description_en.casefold()
     chinese_text = re.sub(
         r"\{\{[^{}|]+\|([^{}]+)\}\}",
         lambda match: match.group(1).split("|")[-1].strip(),
@@ -96,6 +100,9 @@ def extract_character_relations(
     )
     relations: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
+    unlocking = _contains(
+        description_text, "unlock a new character", "unlocked a new character"
+    )
 
     def add(character_id: str, relation_type: str) -> None:
         key = (character_id, relation_type)
@@ -111,6 +118,8 @@ def extract_character_relations(
     )
     for character in CHARACTERS:
         aliases = character["aliases"]
+        if unlocking and name_lower == character["unlock_title"]:
+            add(str(character["id"]), "unlocks_character")
         if (all_characters or (all_normal and not character["tainted"])):
             add(str(character["id"]), "related_character")
         elif any(
@@ -121,6 +130,14 @@ def extract_character_relations(
         name_zh = str(character["name_zh"])
         if re.search(rf"(?:用|使用|作为|操纵)\s*{re.escape(name_zh)}", chinese_text):
             add(str(character["id"]), "required_character")
+        if any(
+            re.search(
+                rf"\b{re.escape(alias)}\s+(?:now\s+)?(?:holds|starts with)",
+                description_text,
+            )
+            for alias in aliases
+        ):
+            add(str(character["id"]), "starting_item_for_character")
     return relations
 
 
@@ -177,7 +194,12 @@ def build_catalog(
     for definition in definitions:
         override = overrides.get(definition.id, {})
         unlock_condition = str(override.get("unlock_condition_en", ""))
-        relations = extract_character_relations("", unlock_condition or definition.description)
+        relations = extract_character_relations(
+            "",
+            unlock_condition or definition.description,
+            definition.name,
+            definition.description,
+        )
         sources: list[dict[str, object]] = [{
             "type": "steam_schema",
             "group": definition.group,
