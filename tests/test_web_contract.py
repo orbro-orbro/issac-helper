@@ -33,6 +33,33 @@ class WebContractTests(unittest.TestCase):
     def attrs_for(self, tag: str):
         return [attrs for found, attrs in self.parser.tags if found == tag]
 
+    def active_achievements(self, catalog, state):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable for the focused JavaScript behavior check")
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"function normalizeAchievementProgress\(item\) \{.*?^\}\n\nfunction relationItems",
+            script,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        function_source = match.group(0).rsplit("\n\nfunction relationItems", 1)[0]
+        program = (
+            f"const model = {json.dumps({'catalog': {'achievements': catalog}, 'state': state})};\n"
+            + function_source
+            + "\nconsole.log(JSON.stringify(activeAchievements()));"
+        )
+
+        completed = subprocess.run(
+            [node, "-e", program],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        return json.loads(completed.stdout)
+
     def test_has_keyboard_skip_link_and_semantic_landmarks(self):
         links = self.attrs_for("a")
         self.assertTrue(any(item.get("href") == "#main" for item in links))
@@ -138,6 +165,66 @@ class WebContractTests(unittest.TestCase):
         )
 
         self.assertEqual(json.loads(completed.stdout), ["Isaac", None, None])
+
+    def test_legacy_flat_unlocked_progress_remains_unlocked(self):
+        [achievement] = self.active_achievements(
+            [{"id": 1}],
+            {"achievements": [{
+                "id": 1,
+                "steam_unlocked": True,
+                "secret_unlocked": False,
+                "unlocked_at": "2026-09-08T12:34:56Z",
+                "sync_warning": True,
+            }]},
+        )
+
+        self.assertEqual(achievement["status"], "unlocked")
+        self.assertTrue(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": True,
+            "secret_unlocked": False,
+            "unlocked_at": "2026-09-08T12:34:56Z",
+            "sync_warning": True,
+        })
+
+    def test_legacy_flat_missing_progress_remains_unknown(self):
+        [achievement] = self.active_achievements(
+            [{"id": 2}],
+            {"achievements": [{"id": 2}]},
+        )
+
+        self.assertEqual(achievement["status"], "unknown")
+        self.assertIsNone(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": None,
+            "secret_unlocked": None,
+            "unlocked_at": None,
+            "sync_warning": False,
+        })
+
+    def test_nested_progress_remains_canonical(self):
+        [achievement] = self.active_achievements(
+            [{"id": 3}],
+            {"achievements": [{
+                "id": 3,
+                "steam_unlocked": True,
+                "progress": {
+                    "steam_unlocked": False,
+                    "secret_unlocked": True,
+                    "unlocked_at": "2026-09-09T01:02:03Z",
+                    "sync_warning": True,
+                },
+            }]},
+        )
+
+        self.assertEqual(achievement["status"], "locked")
+        self.assertFalse(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": False,
+            "secret_unlocked": True,
+            "unlocked_at": "2026-09-09T01:02:03Z",
+            "sync_warning": True,
+        })
 
     def test_achievement_copy_wraps_on_narrow_screens(self):
         stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")

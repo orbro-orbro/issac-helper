@@ -66,25 +66,31 @@ async function api(path, options = {}) {
   return payload;
 }
 
+function normalizeAchievementProgress(item) {
+  const source = item?.progress && typeof item.progress === "object"
+    ? item.progress
+    : item || {};
+  return {
+    steam_unlocked: typeof source.steam_unlocked === "boolean" ? source.steam_unlocked : null,
+    secret_unlocked: typeof source.secret_unlocked === "boolean" ? source.secret_unlocked : null,
+    unlocked_at: source.unlocked_at ?? null,
+    sync_warning: source.sync_warning === true,
+  };
+}
+
 function activeAchievements() {
-  const hasProgress = Boolean(model.state?.achievements?.length);
   const progressById = new Map((model.state?.achievements || []).map((item) => [
     Number(item.id),
-    item.progress,
+    normalizeAchievementProgress(item),
   ]));
   return (model.catalog.achievements || []).map((item) => {
-    const progress = progressById.get(Number(item.id)) || {
-      steam_unlocked: null,
-      secret_unlocked: null,
-      unlocked_at: null,
-      sync_warning: false,
-    };
-    const steamUnlocked = hasProgress ? Boolean(progress.steam_unlocked) : null;
+    const progress = progressById.get(Number(item.id)) || normalizeAchievementProgress(null);
+    const steamUnlocked = progress.steam_unlocked;
     return {
       ...item,
       progress,
       steam_unlocked: steamUnlocked,
-      status: hasProgress ? (steamUnlocked ? "unlocked" : "locked") : "unknown",
+      status: steamUnlocked === null ? "unknown" : (steamUnlocked ? "unlocked" : "locked"),
     };
   });
 }
