@@ -39,6 +39,12 @@ const formatTime = (value) => {
 const achievementName = item =>
   item.display.name_zh || item.display.name_en || `成就 #${item.id}`;
 
+const achievementEnglishSubtitle = (item, primaryTitle) => {
+  const nameZh = String(item.display.name_zh || "").trim();
+  const nameEn = String(item.display.name_en || "").trim();
+  return nameZh && nameEn && nameEn !== String(primaryTitle).trim() ? nameEn : null;
+};
+
 const achievementCondition = item =>
   item.display.unlock_condition_zh ||
   item.display.unlock_condition_en ||
@@ -195,6 +201,8 @@ function achievementList(items) {
     const unlocked = item.status === "unlocked";
     const known = item.status !== "unknown";
     const unlockCondition = achievementCondition(item);
+    const primaryName = achievementName(item);
+    const englishSubtitle = achievementEnglishSubtitle(item, primaryName);
     const relatedCharacters = item.characters || [];
     const characterTags = relatedCharacters.slice(0, 3).map((relation) =>
       `<span class="tag tag-character">角色 · ${escapeHtml(characterLabel(relation.id))}</span>`).join("") +
@@ -208,8 +216,8 @@ function achievementList(items) {
       <img class="achievement-icon" src="${escapeHtml(item.icon?.path || "assets/achievements/fallback.svg")}" alt="" width="40" height="40" loading="lazy">
       <span class="status-mark" aria-label="${known ? (unlocked ? "已解锁" : "未解锁") : "尚未读取"}">${known ? (unlocked ? "✓" : "○") : "·"}</span>
       <div class="achievement-copy">
-        <h3>${escapeHtml(achievementName(item))}</h3>
-        <p class="achievement-name-en" lang="en">${escapeHtml(item.display.name_en || "英文名未提供")}</p>
+        <h3>${escapeHtml(primaryName)}</h3>
+        ${englishSubtitle ? `<p class="achievement-name-en" lang="en">${escapeHtml(englishSubtitle)}</p>` : ""}
         <p>${escapeHtml(unlockCondition)}</p>
         <p class="achievement-reward"><span>奖励</span>${escapeHtml(achievementReward(item))}</p>
         <div class="tag-list">${tags}</div>

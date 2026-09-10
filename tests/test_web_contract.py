@@ -1,5 +1,9 @@
 from html.parser import HTMLParser
+import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -95,14 +99,45 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("提醒", script)
         self.assertIn("来源失败", script)
 
-    def test_achievement_rows_show_secondary_english_name_and_character_tags(self):
+    def test_achievement_rows_show_character_tags(self):
         script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
-        stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
 
-        self.assertIn("achievement-name-en", script)
         self.assertIn("item.characters", script)
         self.assertIn("tag-character", script)
-        self.assertIn(".achievement-name-en", stylesheet)
+
+    def test_english_subtitle_only_supplements_a_distinct_chinese_title(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable for the focused JavaScript behavior check")
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"const achievementEnglishSubtitle = .*?^};",
+            script,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        self.assertIn("achievementEnglishSubtitle(item, primaryName)", script)
+        self.assertNotIn("英文名未提供", script)
+        cases = [
+            ({"display": {"name_zh": "以撒", "name_en": "Isaac"}}, "以撒"),
+            ({"display": {"name_zh": "", "name_en": "Isaac"}}, "Isaac"),
+            ({"display": {"name_zh": "以撒", "name_en": ""}}, "以撒"),
+        ]
+        program = (
+            match.group(0)
+            + f"\nconst cases = {json.dumps(cases, ensure_ascii=False)};"
+            + "\nconsole.log(JSON.stringify(cases.map(([item, title]) => achievementEnglishSubtitle(item, title))));"
+        )
+
+        completed = subprocess.run(
+            [node, "-e", program],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(json.loads(completed.stdout), ["Isaac", None, None])
 
     def test_achievement_copy_wraps_on_narrow_screens(self):
         stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
