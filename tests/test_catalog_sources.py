@@ -1,5 +1,6 @@
 import unittest
 from io import BytesIO
+import json
 from unittest.mock import patch
 from urllib.error import HTTPError
 
@@ -8,6 +9,7 @@ from app.huiji_catalog import (
     HUIJI_RAW_URL,
     HUIJI_READER_URL,
     fetch_huiji_achievements,
+    parse_huiji_name_lookup,
     parse_huiji_tabx,
 )
 from app.wiki_catalog import parse_wiki_achievement_table
@@ -53,12 +55,21 @@ class CatalogSourceTests(unittest.TestCase):
             + b"\n\nMarkdown Content:\n"
             + payload
         )
+        empty_lookup = json.dumps({
+            "schema": {"fields": [
+                {"name": "page"}, {"name": "namezh"},
+            ]},
+            "data": [],
+        }).encode("utf-8")
 
         with patch(
             "app.huiji_catalog.urlopen",
             side_effect=[
                 HTTPError(HUIJI_RAW_URL, 403, "Forbidden", None, None),
                 reader_response,
+                BytesIO(empty_lookup),
+                BytesIO(empty_lookup),
+                BytesIO(empty_lookup),
             ],
         ) as mocked_open:
             item = fetch_huiji_achievements()[1]
@@ -70,7 +81,13 @@ class CatalogSourceTests(unittest.TestCase):
         )
         self.assertEqual(
             [call.args[0].full_url for call in mocked_open.call_args_list],
-            [HUIJI_RAW_URL, HUIJI_READER_URL],
+            [
+                HUIJI_RAW_URL,
+                HUIJI_READER_URL,
+                "https://isaac.huijiwiki.com/wiki/Data:Entity.tabx?action=raw",
+                "https://isaac.huijiwiki.com/wiki/Data:Item.tabx?action=raw",
+                "https://isaac.huijiwiki.com/wiki/Data:Challenge.tabx?action=raw",
+            ],
         )
 
     def test_huiji_parser_fills_the_verified_missing_condition_for_1000000_percent(self):
@@ -87,3 +104,96 @@ class CatalogSourceTests(unittest.TestCase):
             item.values["unlock_condition_zh"],
             "解锁除本成就以外的其他任意402个成就。",
         )
+
+    def test_huiji_name_lookup_uses_the_template_identity_from_each_page(self):
+        payload = {
+            "schema": {"fields": [
+                {"name": "namezh"}, {"name": "page"},
+            ]},
+            "data": [
+                ["撒但", "实体/84#84.0.0"],
+                ["钥匙碎片1", "c238"],
+            ],
+        }
+
+        self.assertEqual(
+            parse_huiji_name_lookup(payload),
+            {"84.0.0": "撒但", "c238": "钥匙碎片1"},
+        )
+
+    def test_huiji_parser_resolves_named_entity_and_item_templates(self):
+        payload = {
+            "schema": {"fields": [
+                {"name": "id"}, {"name": "UnlockReq"},
+            ]},
+            "data": [[58, "击败{{entity|ID=84.0.0}}、拥有{{item|ID=c238}}并通过{{挑战|13}}。"]],
+        }
+
+        item = parse_huiji_tabx(
+            payload,
+            template_names={
+                "entity": {"84.0.0": "撒但"},
+                "item": {"c238": "钥匙碎片1"},
+                "挑战": {"13": "挑战#13：豆子！"},
+            },
+        )[58]
+
+        self.assertEqual(
+            item.values["unlock_condition_zh"],
+            "击败撒但、拥有钥匙碎片1并通过挑战#13：豆子！。",
+        )
+
+    def test_huiji_fetch_uses_entity_and_item_tables_for_template_names(self):
+        achievement_payload = {
+            "schema": {"fields": [
+                {"name": "id"}, {"name": "UnlockReq"},
+            ]},
+            "data": [[58, "击败{{entity|ID=84.0.0}}、拥有{{item|ID=c238}}并通过{{挑战|13}}。"]],
+        }
+        entity_payload = {
+            "schema": {"fields": [
+                {"name": "page"}, {"name": "namezh"},
+            ]},
+            "data": [["实体/84#84.0.0", "撒但"]],
+        }
+        item_payload = {
+            "schema": {"fields": [
+                {"name": "page"}, {"name": "namezh"},
+            ]},
+            "data": [["c238", "钥匙碎片1"]],
+        }
+        challenge_payload = {
+            "schema": {"fields": [
+                {"name": "page"}, {"name": "namezh"},
+            ]},
+            "data": [["挑战/13", "豆子！"]],
+        }
+        responses = [
+            BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8"))
+            for payload in (
+                achievement_payload,
+                entity_payload,
+                item_payload,
+                challenge_payload,
+            )
+        ]
+
+        with patch("app.huiji_catalog.urlopen", side_effect=responses):
+            item = fetch_huiji_achievements()[58]
+
+        self.assertEqual(
+            item.values["unlock_condition_zh"],
+            "击败撒但、拥有钥匙碎片1并通过挑战#13：豆子！。",
+        )
+
+    def test_huiji_parser_keeps_the_number_for_the_unnamed_challenge_45(self):
+        payload = {
+            "schema": {"fields": [
+                {"name": "id"}, {"name": "UnlockReq"},
+            ]},
+            "data": [[538, "通过{{挑战|45}}。"]],
+        }
+
+        item = parse_huiji_tabx(payload, template_names={"挑战": {}})[538]
+
+        self.assertEqual(item.values["unlock_condition_zh"], "通过挑战#45。")
