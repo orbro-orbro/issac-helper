@@ -54,6 +54,14 @@
 
 合并时按字段应用上述优先级，来源不一致的值会记录为冲突，不会静默覆盖。每个字段还会保留来源链接或 `local_steam_schema` 本地来源，以及可用的抓取时间。Steam 元数据来自本机 Steam Schema；玩法资料引用[The Binding of Isaac: Rebirth Wiki on wiki.gg](https://bindingofisaacrebirth.wiki.gg/wiki/Achievement)；中文资料引用[以撒的结合中文维基（灰机 Wiki）](https://isaac.huijiwiki.com/wiki/%E9%A6%96%E9%A1%B5)。各来源内容权利和署名要求归其原始来源。
 
+## 资料与资源署名
+
+- 目录中的 641 条英文解锁条件来自 [The Binding of Isaac: Rebirth Wiki 的 Achievement 页面](https://bindingofisaacrebirth.wiki.gg/wiki/Achievement)，署名为 **The Binding of Isaac: Rebirth Wiki contributors**。本项目对这些字段进行了抽取、清理和结构化适配；来源页面按 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/) 提供内容，适用的衍生文本继续遵循相应的署名与相同方式共享条款。
+- [以撒的结合中文维基的版权/分享说明](https://isaac.huijiwiki.com/wiki/MediaWiki%3AFooter) 区分了两类内容：部分英文 Wiki 译文采用 CC BY-SA 3.0，部分原创测试等内容采用 CC BY-NC-SA 3.0。在发布任何包含灰机字段的基线前，维护者必须按具体页面和字段核对适用条款，并分别满足署名、相同方式共享及适用时的非商业限制。当前基线因抓取返回 HTTP 403，不含灰机来源字段。
+- 成就列表可与 [Steam 官方成就页](https://steamcommunity.com/stats/250900/achievements) 核对，游戏信息见 [Steam 官方商店页](https://store.steampowered.com/app/250900/The_Binding_of_Isaac_Rebirth/)。缓存的成就 JPG 图像来自 Steam CDN；游戏和美术相关权利归 Nicalis, Inc.、Edmund McMillen 等官方商店所列的相应权利人。本项目为非官方工具，与 Valve/Steam、Nicalis 或 Edmund McMillen 均无隶属、合作或背书关系。
+
+上述署名及文件随项目收录这一事实本身不授予额外的再分发许可。任何发布 fork 或发行包的人都应自行核对文字与图像的许可；如果无法确认缓存 JPG 的再分发权限，应从发行物中删除这些 JPG，并让使用者在本机通过更新功能重新生成缓存。
+
 仓库已经包含可离线使用的 641 条统一目录 `data/catalog/achievements.json` 和本地图标。维护者可用与网页相同的更新流程刷新它：
 
 ```powershell
