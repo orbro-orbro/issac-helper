@@ -18,18 +18,32 @@ from app.snapshots import (
 class SnapshotTests(unittest.TestCase):
     def test_merge_keeps_steam_and_secret_states_separate(self):
         catalog = [
-            {"id": 1, "status": "unknown"},
-            {"id": 2, "status": "unknown"},
-            {"id": 3, "status": "unknown"},
+            {
+                "id": 101,
+                "steam": {"group": 3, "bit": 4},
+                "secret": {"id": 1, "status": "verified"},
+            },
+            {
+                "id": 102,
+                "steam": {"group": 3, "bit": 5},
+                "secret": {"id": 2, "status": "verified"},
+            },
+            {
+                "id": 103,
+                "steam": {"group": 4, "bit": 0},
+                "secret": {"id": 3, "status": "verified"},
+            },
         ]
-        unlocked = {1: datetime(2024, 1, 1, tzinfo=timezone.utc), 2: None}
+        unlocked_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        unlocked = {(3, 4): unlocked_at, (3, 5): None}
 
-        items, summary, differences = merge_progress(
-            catalog, unlocked, {2, 3}, secret_id_map={1: 1, 2: 2, 3: 3}
-        )
+        items, summary, differences = merge_progress(catalog, unlocked, {2, 3})
 
-        self.assertEqual([item["steam_unlocked"] for item in items], [True, True, False])
-        self.assertEqual([item["secret_unlocked"] for item in items], [False, True, True])
+        progress = [item["progress"] for item in items]
+        self.assertEqual([item["steam_unlocked"] for item in progress], [True, True, False])
+        self.assertEqual([item["secret_unlocked"] for item in progress], [False, True, True])
+        self.assertEqual(progress[0]["unlocked_at"], unlocked_at.isoformat())
+        self.assertEqual([item["sync_warning"] for item in progress], [True, False, True])
         self.assertEqual(summary, {
             "total": 3,
             "steam_unlocked": 2,
@@ -37,16 +51,23 @@ class SnapshotTests(unittest.TestCase):
             "sync_difference_count": 2,
         })
         self.assertEqual(differences, [
-            {"id": 1, "steam_unlocked": True, "secret_unlocked": False},
-            {"id": 3, "steam_unlocked": False, "secret_unlocked": True},
+            {"id": 101, "steam_unlocked": True, "secret_unlocked": False},
+            {"id": 103, "steam_unlocked": False, "secret_unlocked": True},
         ])
+        self.assertNotIn("progress", catalog[0])
 
     def test_merge_does_not_guess_secret_mapping(self):
-        catalog = [{"id": 1, "status": "unknown"}]
+        catalog = [{
+            "id": 1,
+            "steam": {"group": 1, "bit": 0},
+            "secret": {"id": 1, "status": "unverified"},
+        }]
 
-        items, summary, differences = merge_progress(catalog, {1: None}, {1})
+        items, summary, differences = merge_progress(catalog, {(1, 0): None}, {1})
 
-        self.assertIsNone(items[0]["secret_unlocked"])
+        self.assertTrue(items[0]["progress"]["steam_unlocked"])
+        self.assertIsNone(items[0]["progress"]["secret_unlocked"])
+        self.assertFalse(items[0]["progress"]["sync_warning"])
         self.assertEqual(summary["sync_difference_count"], 0)
         self.assertEqual(differences, [])
 

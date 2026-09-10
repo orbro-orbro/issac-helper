@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import asdict
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
@@ -12,12 +13,20 @@ from typing import Callable, Sequence
 from urllib.parse import unquote, urlsplit, parse_qs
 import webbrowser
 
-from .catalog import CATEGORY_DEFINITIONS, CHARACTERS, build_catalog
-from .discovery import AccountInfo, DiscoveryError, discover_accounts, resolve_selection
+from . import APP_ID
+from .catalog import CATEGORY_DEFINITIONS, CHARACTERS
+from .catalog_store import CatalogLoadError, load_catalog, validate_catalog
+from .catalog_update import CatalogUpdateResult, update_achievement_catalog
+from .discovery import (
+    AccountInfo,
+    DiscoveryError,
+    default_steam_roots,
+    discover_accounts,
+    resolve_selection,
+)
 from .readers.binary_kv import BinaryKVError
-from .readers.steam_stats import SteamStatsError, read_schema
+from .readers.steam_stats import SteamStatsError
 from .snapshots import SnapshotError, build_snapshot, load_snapshot
-from .wiki_catalog import load_wiki_overrides
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -39,17 +48,32 @@ def _public_characters() -> list[dict[str, object]]:
     ]
 
 
+def _catalog_schema_path(accounts: Sequence[AccountInfo]) -> Path:
+    candidates = [item.schema_path for item in accounts]
+    candidates.extend(
+        root / "appcache" / "stats" / f"UserGameStatsSchema_{APP_ID}.bin"
+        for root in default_steam_roots()
+    )
+    return next((path for path in candidates if path.is_file()), candidates[0])
+
+
 def create_server(
     host: str = "127.0.0.1",
     port: int = 0,
     project_root: Path | None = None,
     accounts_provider: Callable[[], Sequence[AccountInfo]] = discover_accounts,
+    catalog_loader: Callable[[Path], dict[str, object]] = load_catalog,
+    catalog_updater: Callable[[Path, Path, Path], CatalogUpdateResult] = (
+        update_achievement_catalog
+    ),
 ) -> ThreadingHTTPServer:
     if host != "127.0.0.1":
         raise ValueError("Isaac Helper may only bind to 127.0.0.1")
     root = Path(project_root or PROJECT_ROOT).resolve()
     web_root = root / "web"
     profiles_root = root / "data" / "profiles"
+    catalog_path = root / "data" / "catalog" / "achievements.json"
+    icons_dir = web_root / "assets" / "achievements"
 
     class Handler(SimpleHTTPRequestHandler):
         server_version = "IsaacHelper/0.1"
@@ -108,6 +132,27 @@ def create_server(
                 return None
             return body
 
+        def _read_json_object(self) -> dict[str, object] | None:
+            body = self._read_request_body()
+            if body is None:
+                return None
+            try:
+                payload = json.loads(body.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+                self._error(400, "invalid_request", f"JSON 无效：{exc}")
+                return None
+            if not isinstance(payload, dict):
+                self._error(400, "invalid_request", "JSON 根节点必须是对象")
+                return None
+            return payload
+
+        def _active_catalog(self) -> dict[str, object] | None:
+            try:
+                return dict(catalog_loader(catalog_path))
+            except (OSError, ValueError, CatalogLoadError) as exc:
+                self._error(503, "catalog_unavailable", str(exc))
+                return None
+
         def do_GET(self) -> None:
             if not self._loopback_host():
                 self._error(421, "invalid_host", "仅允许通过本机地址访问")
@@ -118,19 +163,41 @@ def create_server(
                 self._send_json(200, {"accounts": [item.as_dict() for item in accounts]})
                 return
             if parsed.path == "/api/catalog":
-                accounts = list(accounts_provider())
-                schema_path = next(
-                    (item.schema_path for item in accounts if item.schema_path.is_file()), None
+                payload = self._active_catalog()
+                if payload is None:
+                    return
+                payload["characters"] = _public_characters()
+                payload["categories"] = CATEGORY_DEFINITIONS
+                self._send_json(200, payload)
+                return
+            if parsed.path == "/api/catalog/status":
+                payload = self._active_catalog()
+                if payload is None:
+                    return
+                achievement_count = payload.get("achievement_count", 0)
+                expected_count = (
+                    achievement_count
+                    if isinstance(achievement_count, int)
+                    and not isinstance(achievement_count, bool)
+                    else 641
                 )
-                achievements = (
-                    build_catalog(read_schema(schema_path), overrides=load_wiki_overrides())
-                    if schema_path else []
+                validation = validate_catalog(
+                    payload,
+                    expected_count=expected_count,
+                    assets_root=web_root,
                 )
+                stored_warnings = payload.get("warnings", [])
+                warnings = (
+                    [item for item in stored_warnings if isinstance(item, str)]
+                    if isinstance(stored_warnings, list)
+                    else []
+                )
+                warnings.extend(validation.warnings)
                 self._send_json(200, {
-                    "achievements": achievements,
-                    "characters": _public_characters(),
-                    "categories": CATEGORY_DEFINITIONS,
-                    "warning": None if schema_path else "未找到本地 Steam 成就 Schema",
+                    "updated_at": payload.get("generated_at"),
+                    "achievement_count": achievement_count,
+                    "completeness": validation.completeness,
+                    "warnings": warnings,
                 })
                 return
             if parsed.path == "/api/state":
@@ -161,11 +228,8 @@ def create_server(
 
         def do_POST(self) -> None:
             parsed = urlsplit(self.path)
-            if parsed.path != "/api/update":
+            if parsed.path not in {"/api/update", "/api/catalog/update"}:
                 self._error(404, "not_found", "接口不存在")
-                return
-            body = self._read_request_body()
-            if body is None:
                 return
             if not self._loopback_host():
                 self._error(421, "invalid_host", "仅允许通过本机地址访问")
@@ -177,19 +241,33 @@ def create_server(
             if content_type != "application/json":
                 self._error(415, "unsupported_media_type", "请求必须使用 application/json")
                 return
+            payload = self._read_json_object()
+            if payload is None:
+                return
+            if parsed.path == "/api/catalog/update":
+                if payload:
+                    self._error(400, "invalid_request", "成就资料更新不接受参数")
+                    return
+                accounts = list(accounts_provider())
+                schema_path = _catalog_schema_path(accounts)
+                result = catalog_updater(schema_path, catalog_path, icons_dir)
+                self._send_json(200 if result.ok else 422, asdict(result))
+                return
             try:
-                payload = json.loads(body.decode("utf-8"))
-                if not isinstance(payload, dict):
-                    raise ValueError("JSON 根节点必须是对象")
                 account_id = payload.get("account_id")
                 slot = payload.get("slot")
                 if not isinstance(account_id, str) or not isinstance(slot, int):
                     raise ValueError("account_id 必须是字符串，slot 必须是整数")
                 selection = resolve_selection(account_id, slot, list(accounts_provider()))
-                state = build_snapshot(selection, profiles_root)
-            except (UnicodeDecodeError, json.JSONDecodeError, ValueError, DiscoveryError) as exc:
+            except (ValueError, DiscoveryError) as exc:
                 self._error(400, "invalid_selection", str(exc))
                 return
+            try:
+                state = build_snapshot(
+                    selection,
+                    profiles_root,
+                    catalog_path=catalog_path,
+                )
             except (OSError, BinaryKVError, SteamStatsError, SnapshotError) as exc:
                 self._error(422, "read_failed", str(exc))
                 return
