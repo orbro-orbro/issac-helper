@@ -19,6 +19,52 @@ from app.snapshots import (
 
 
 class SnapshotTests(unittest.TestCase):
+    def test_build_snapshot_uses_project_catalog_by_default_and_explicit_override(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            schema_path = root / "schema.bin"
+            stats_path = root / "stats.bin"
+            save_path = root / "rep+persistentgamedata1.dat"
+            schema_path.write_bytes(b"schema")
+            stats_path.write_bytes(b"stats")
+            save_path.write_bytes(b"unsupported save")
+            slot = SlotInfo(1, save_path, datetime.now(tz=timezone.utc), save_path.stat().st_size)
+            account = AccountInfo(
+                id="123",
+                steam_root=root,
+                stats_path=stats_path,
+                schema_path=schema_path,
+                game_dir=root / "game",
+                save_dir=root,
+                slots=(slot,),
+            )
+            loaded_paths = []
+
+            def load_test_catalog(path):
+                loaded_paths.append(Path(path))
+                return {"achievements": [], "diagnostics": {}}
+
+            explicit_path = root / "custom-catalog.json"
+            with (
+                mock.patch("app.snapshots.parse_binary_keyvalues", return_value={}),
+                mock.patch("app.snapshots.extract_schema", return_value=[]),
+                mock.patch("app.snapshots.extract_unlocked", return_value={}),
+                mock.patch("app.snapshots.load_catalog", side_effect=load_test_catalog),
+            ):
+                selection = Selection(account, slot)
+                build_snapshot(selection, root / "private-default")
+                build_snapshot(
+                    selection,
+                    root / "private-explicit",
+                    catalog_path=explicit_path,
+                )
+
+            project_root = Path(__file__).resolve().parents[1]
+            self.assertEqual(loaded_paths, [
+                project_root / "data" / "catalog" / "achievements.json",
+                explicit_path,
+            ])
+
     def test_secret_parse_failure_keeps_verified_secret_progress_unavailable(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

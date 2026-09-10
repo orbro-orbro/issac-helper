@@ -209,8 +209,8 @@ def build_snapshot(
             "error": str(exc),
         }
 
-    active_catalog_path = Path(catalog_path) if catalog_path else (
-        Path(output_root).parent / "catalog" / "achievements.json"
+    active_catalog_path = Path(catalog_path) if catalog_path is not None else (
+        Path(__file__).resolve().parent.parent / "data" / "catalog" / "achievements.json"
     )
     try:
         active_catalog = load_catalog(active_catalog_path)
