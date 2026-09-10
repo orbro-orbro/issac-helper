@@ -57,6 +57,26 @@ class CatalogTests(unittest.TestCase):
             ["character", "route_boss", "special_run"],
         )
 
+    def test_normalized_record_exposes_steam_description_in_both_namespaces(self):
+        payload = merge_catalog(
+            steam={1: source(
+                1,
+                "steam_schema",
+                steam_name="1",
+                name_en="The Sad Onion",
+                steam_description_en="Complete the first chapter.",
+                steam_group=1,
+                steam_bit=0,
+            )},
+            wiki={},
+            huiji={},
+            generated_at="2026-09-10T00:00:00+00:00",
+        )
+
+        item = payload["achievements"][0]
+        self.assertEqual(item["steam"]["description_en"], "Complete the first chapter.")
+        self.assertEqual(item["display"]["description_en"], "Complete the first chapter.")
+
 
 if __name__ == "__main__":
     unittest.main()

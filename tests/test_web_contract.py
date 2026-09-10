@@ -86,6 +86,24 @@ class WebContractTests(unittest.TestCase):
         self.assertIn("/api/catalog/update", script)
         self.assertIn('body: "{}"', script)
 
+    def test_catalog_update_reports_full_summary_and_structured_errors(self):
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("Array.isArray(payload.errors)", script)
+        self.assertIn("更新时间", script)
+        self.assertIn("字段完整度", script)
+        self.assertIn("提醒", script)
+        self.assertIn("来源失败", script)
+
+    def test_achievement_rows_show_secondary_english_name_and_character_tags(self):
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
+
+        self.assertIn("achievement-name-en", script)
+        self.assertIn("item.characters", script)
+        self.assertIn("tag-character", script)
+        self.assertIn(".achievement-name-en", stylesheet)
+
     def test_achievement_copy_wraps_on_narrow_screens(self):
         stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")
 

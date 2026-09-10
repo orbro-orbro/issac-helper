@@ -239,6 +239,7 @@ h3 { font-size: 15px; }
 .unlocked .status-mark { color: var(--soul); }
 .achievement-row h3 { margin: 0 0 4px; color: var(--bone); }
 .achievement-row p { margin: 0; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; word-break: break-word; }
+.achievement-name-en { margin-bottom: 5px !important; color: #aaa49b !important; font: 11px/1.35 var(--utility); }
 .achievement-reward { margin-top: 6px !important; color: #b9b3aa !important; }
 .achievement-reward span { margin-right: 7px; color: var(--soul); font: 10px/1 var(--utility); letter-spacing: .06em; }
 .achievement-id { color: var(--muted); font: 11px/1.4 var(--utility); }
@@ -246,6 +247,7 @@ h3 { font-size: 15px; }
 .achievement-open { padding: 2px 0; font-size: 11px; white-space: nowrap; }
 .tag-list { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; }
 .tag { padding: 2px 6px; border: 1px solid var(--line); color: #9c968e; font-size: 10px; }
+.tag-character { border-color: #39484b; color: var(--soul); }
 .tag-dlc { color: var(--soul); font-family: var(--utility); }
 
 .back-button { margin-bottom: 18px; border: 0; padding: 0; background: transparent; color: var(--soul); }

@@ -195,7 +195,12 @@ def merge_catalog(
         }
         achievements.append({
             "id": achievement_id,
-            "steam": {"name": steam_name, "group": steam_group, "bit": steam_bit},
+            "steam": {
+                "name": steam_name,
+                "group": steam_group,
+                "bit": steam_bit,
+                "description_en": description_en,
+            },
             "secret": _secret_mapping(
                 achievement_id, steam_item, wiki_item, huiji_item, secret_count
             ),

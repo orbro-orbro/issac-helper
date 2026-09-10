@@ -52,7 +52,10 @@ async function api(path, options = {}) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload?.error?.message || `请求失败（${response.status}）`);
+    const structuredErrors = Array.isArray(payload.errors)
+      ? payload.errors.filter((item) => typeof item === "string" && item.trim())
+      : [];
+    throw new Error(payload?.error?.message || structuredErrors.join("；") || `请求失败（${response.status}）`);
   }
   return payload;
 }
@@ -87,6 +90,10 @@ function relationItems(characterId) {
 
 function categoryLabel(categoryId) {
   return model.catalog.categories?.[categoryId]?.name_zh || categoryId;
+}
+
+function characterLabel(characterId) {
+  return model.catalog.characters.find((item) => item.id === characterId)?.name_zh || characterId;
 }
 
 function pageHeader(kicker, title, copy, aside = "") {
@@ -136,6 +143,24 @@ function diagnosticsMarkup(title, entries, emptyText) {
   }).join("")}</ul></section>`;
 }
 
+function catalogCompletenessSummary(result) {
+  const counts = Object.values(result.completeness || {})
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  if (!counts.length) return "未知";
+  const complete = counts.filter((value) => value >= result.achievement_count).length;
+  return `${complete}/${counts.length} 个字段完整，最低 ${Math.min(...counts)}/${result.achievement_count}`;
+}
+
+function catalogSourceFailures(result) {
+  const notices = [...(result.errors || []), ...(result.warnings || [])]
+    .filter((item) => typeof item === "string" && /failed|failure|error|403|失败|网络/i.test(item));
+  return notices.length ? notices.join("；") : "无";
+}
+
+function catalogUpdateSummary(result) {
+  return `更新时间：${formatTime(result.updated_at)} · 成就数量：${result.achievement_count} · 字段完整度：${catalogCompletenessSummary(result)} · 提醒：${result.warnings?.length || 0} 条 · 来源失败：${catalogSourceFailures(result)}`;
+}
+
 function openAchievementDetails(achievementId) {
   const item = activeAchievements().find((achievement) => Number(achievement.id) === Number(achievementId));
   if (!item) return;
@@ -170,7 +195,13 @@ function achievementList(items) {
     const unlocked = item.status === "unlocked";
     const known = item.status !== "unknown";
     const unlockCondition = achievementCondition(item);
-    const tags = (item.categories || []).map((id) =>
+    const relatedCharacters = item.characters || [];
+    const characterTags = relatedCharacters.slice(0, 3).map((relation) =>
+      `<span class="tag tag-character">角色 · ${escapeHtml(characterLabel(relation.id))}</span>`).join("") +
+      (relatedCharacters.length > 3
+        ? `<span class="tag tag-character">另 ${relatedCharacters.length - 3} 名角色</span>`
+        : "");
+    const tags = characterTags + (item.categories || []).map((id) =>
       `<span class="tag">${escapeHtml(categoryLabel(id))}</span>`).join("") +
       (item.dlc ? `<span class="tag tag-dlc">${escapeHtml(item.dlc)}</span>` : "");
     return `<article class="achievement-row ${escapeHtml(item.status)}">
@@ -178,6 +209,7 @@ function achievementList(items) {
       <span class="status-mark" aria-label="${known ? (unlocked ? "已解锁" : "未解锁") : "尚未读取"}">${known ? (unlocked ? "✓" : "○") : "·"}</span>
       <div class="achievement-copy">
         <h3>${escapeHtml(achievementName(item))}</h3>
+        <p class="achievement-name-en" lang="en">${escapeHtml(item.display.name_en || "英文名未提供")}</p>
         <p>${escapeHtml(unlockCondition)}</p>
         <p class="achievement-reward"><span>奖励</span>${escapeHtml(achievementReward(item))}</p>
         <div class="tag-list">${tags}</div>
@@ -440,8 +472,7 @@ catalogUpdate.addEventListener("click", async () => {
       warnings: result.warnings,
     };
     renderCatalogStatus();
-    const warningCount = result.warnings?.length || 0;
-    catalogUpdateResult.textContent = `已更新 ${result.achievement_count} 项成就资料${warningCount ? ` · ${warningCount} 条提醒` : ""}`;
+    catalogUpdateResult.textContent = catalogUpdateSummary(result);
     route();
   } catch (error) {
     catalogUpdateResult.textContent = error.message;
