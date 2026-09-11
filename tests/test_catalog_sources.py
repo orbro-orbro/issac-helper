@@ -197,3 +197,17 @@ class CatalogSourceTests(unittest.TestCase):
         item = parse_huiji_tabx(payload, template_names={"挑战": {}})[538]
 
         self.assertEqual(item.values["unlock_condition_zh"], "通过挑战#45。")
+
+    def test_huiji_parser_rejects_an_unresolved_entity_or_item_id(self):
+        payload = {
+            "schema": {"fields": [
+                {"name": "id"}, {"name": "UnlockReq"},
+            ]},
+            "data": [[3, "击败{{entity|ID=999.0.0}}。"]],
+        }
+
+        with self.assertRaisesRegex(ValueError, r"entity.*999\.0\.0"):
+            parse_huiji_tabx(
+                payload,
+                template_names={"entity": {}, "item": {}},
+            )

@@ -67,6 +67,7 @@ def _display_text(
         parts = [part.strip() for part in match.group(1).split("|")]
         if len(parts) < 2:
             return ""
+        template_name = parts[0].lower()
         display = [part for part in parts[1:] if "=" not in part]
         named = {
             key.strip().lower(): content.strip()
@@ -74,16 +75,27 @@ def _display_text(
             if "=" in part
             for key, content in [part.split("=", 1)]
         }
-        template_lookup = (template_names or {}).get(parts[0].lower(), {})
+        template_lookup = (template_names or {}).get(template_name, {})
         if display and not named:
             resolved = template_lookup.get(display[0].lower())
             if resolved:
                 return resolved
-            if parts[0].lower() == "挑战":
+            if template_name == "挑战":
                 return f"挑战#{display[0]}"
         if display:
             return display[-1]
-        return template_lookup.get(named.get("id", "").lower(), "")
+        identity = named.get("id", "").lower()
+        resolved = template_lookup.get(identity, "")
+        if (
+            not resolved
+            and template_names is not None
+            and template_name in {"entity", "item"}
+            and identity
+        ):
+            raise ValueError(
+                f"Huiji {template_name} template ID {identity} has no Chinese name"
+            )
+        return resolved
 
     text = re.sub(r"\[\[([^\]]+)\]\]", link, value)
     text = re.sub(r"\{\{([^{}]+)\}\}", template, text)
