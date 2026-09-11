@@ -1,5 +1,9 @@
 from html.parser import HTMLParser
+import json
 from pathlib import Path
+import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -28,6 +32,33 @@ class WebContractTests(unittest.TestCase):
 
     def attrs_for(self, tag: str):
         return [attrs for found, attrs in self.parser.tags if found == tag]
+
+    def active_achievements(self, catalog, state):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable for the focused JavaScript behavior check")
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"function normalizeAchievementProgress\(item\) \{.*?^\}\n\nfunction relationItems",
+            script,
+            flags=re.MULTILINE | re.DOTALL,
+        )
+        self.assertIsNotNone(match)
+        function_source = match.group(0).rsplit("\n\nfunction relationItems", 1)[0]
+        program = (
+            f"const model = {json.dumps({'catalog': {'achievements': catalog}, 'state': state})};\n"
+            + function_source
+            + "\nconsole.log(JSON.stringify(activeAchievements()));"
+        )
+
+        completed = subprocess.run(
+            [node, "-e", program],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        return json.loads(completed.stdout)
 
     def test_has_keyboard_skip_link_and_semantic_landmarks(self):
         links = self.attrs_for("a")
@@ -61,13 +92,139 @@ class WebContractTests(unittest.TestCase):
 
         self.assertIn("display: block", rule)
 
-    def test_achievement_rows_prefer_actionable_unlock_condition(self):
+    def test_achievement_rows_prefer_nested_localized_metadata(self):
         script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
 
-        self.assertIn(
-            "item.unlock_condition_zh || item.unlock_condition_en || item.description",
+        self.assertIn("item.display.name_zh", script)
+        self.assertIn("item.display.name_en", script)
+        self.assertIn("item.display.unlock_condition_zh", script)
+        self.assertIn("item.display.unlock_condition_en", script)
+        self.assertIn("item.steam.description_en", script)
+
+    def test_exposes_separate_catalog_update_and_details(self):
+        buttons = self.attrs_for("button")
+        self.assertTrue(any(item.get("id") == "catalog-update" for item in buttons))
+        self.assertTrue(any(
+            item.get("id") == "achievement-details"
+            for item in self.attrs_for("dialog")
+        ))
+        self.assertTrue(any(
+            item.get("data-close-achievement") is not None
+            for item in buttons
+        ))
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn("/api/catalog/status", script)
+        self.assertIn("/api/catalog/update", script)
+        self.assertIn('body: "{}"', script)
+
+    def test_catalog_update_reports_full_summary_and_structured_errors(self):
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("Array.isArray(payload.errors)", script)
+        self.assertIn("更新时间", script)
+        self.assertIn("字段完整度", script)
+        self.assertIn("提醒", script)
+        self.assertIn("来源失败", script)
+
+    def test_achievement_rows_show_character_tags(self):
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+
+        self.assertIn("item.characters", script)
+        self.assertIn("tag-character", script)
+
+    def test_english_subtitle_only_supplements_a_distinct_chinese_title(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node.js is unavailable for the focused JavaScript behavior check")
+        script = (WEB_ROOT / "app.js").read_text(encoding="utf-8")
+        match = re.search(
+            r"const achievementEnglishSubtitle = .*?^};",
             script,
+            flags=re.MULTILINE | re.DOTALL,
         )
+        self.assertIsNotNone(match)
+        self.assertIn("achievementEnglishSubtitle(item, primaryName)", script)
+        self.assertNotIn("英文名未提供", script)
+        cases = [
+            ({"display": {"name_zh": "以撒", "name_en": "Isaac"}}, "以撒"),
+            ({"display": {"name_zh": "", "name_en": "Isaac"}}, "Isaac"),
+            ({"display": {"name_zh": "以撒", "name_en": ""}}, "以撒"),
+        ]
+        program = (
+            match.group(0)
+            + f"\nconst cases = {json.dumps(cases, ensure_ascii=False)};"
+            + "\nconsole.log(JSON.stringify(cases.map(([item, title]) => achievementEnglishSubtitle(item, title))));"
+        )
+
+        completed = subprocess.run(
+            [node, "-e", program],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+
+        self.assertEqual(json.loads(completed.stdout), ["Isaac", None, None])
+
+    def test_legacy_flat_unlocked_progress_remains_unlocked(self):
+        [achievement] = self.active_achievements(
+            [{"id": 1}],
+            {"achievements": [{
+                "id": 1,
+                "steam_unlocked": True,
+                "secret_unlocked": False,
+                "unlocked_at": "2026-09-08T12:34:56Z",
+                "sync_warning": True,
+            }]},
+        )
+
+        self.assertEqual(achievement["status"], "unlocked")
+        self.assertTrue(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": True,
+            "secret_unlocked": False,
+            "unlocked_at": "2026-09-08T12:34:56Z",
+            "sync_warning": True,
+        })
+
+    def test_legacy_flat_missing_progress_remains_unknown(self):
+        [achievement] = self.active_achievements(
+            [{"id": 2}],
+            {"achievements": [{"id": 2}]},
+        )
+
+        self.assertEqual(achievement["status"], "unknown")
+        self.assertIsNone(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": None,
+            "secret_unlocked": None,
+            "unlocked_at": None,
+            "sync_warning": False,
+        })
+
+    def test_nested_progress_remains_canonical(self):
+        [achievement] = self.active_achievements(
+            [{"id": 3}],
+            {"achievements": [{
+                "id": 3,
+                "steam_unlocked": True,
+                "progress": {
+                    "steam_unlocked": False,
+                    "secret_unlocked": True,
+                    "unlocked_at": "2026-09-09T01:02:03Z",
+                    "sync_warning": True,
+                },
+            }]},
+        )
+
+        self.assertEqual(achievement["status"], "locked")
+        self.assertFalse(achievement["steam_unlocked"])
+        self.assertEqual(achievement["progress"], {
+            "steam_unlocked": False,
+            "secret_unlocked": True,
+            "unlocked_at": "2026-09-09T01:02:03Z",
+            "sync_warning": True,
+        })
 
     def test_achievement_copy_wraps_on_narrow_screens(self):
         stylesheet = (WEB_ROOT / "styles.css").read_text(encoding="utf-8")

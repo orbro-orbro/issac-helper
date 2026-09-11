@@ -7,6 +7,7 @@ const model = {
   accountId: null,
   slot: null,
   characterOrder: "unfinished",
+  catalogStatus: null,
 };
 
 const viewRoot = document.querySelector("#view");
@@ -17,6 +18,12 @@ const accountSelect = document.querySelector("#account-select");
 const slotSelect = document.querySelector("#slot-select");
 const updateStatus = document.querySelector("#update-status");
 const updateButton = document.querySelector("#run-update");
+const catalogUpdate = document.querySelector("#catalog-update");
+const catalogUpdatedAt = document.querySelector("#catalog-updated-at");
+const catalogUpdateResult = document.querySelector("#catalog-update-result");
+const achievementDetails = document.querySelector("#achievement-details");
+const achievementDetailsTitle = document.querySelector("#achievement-details-title");
+const achievementDetailsContent = document.querySelector("#achievement-details-content");
 const toast = document.querySelector("#toast");
 
 const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (character) => ({
@@ -29,32 +36,76 @@ const formatTime = (value) => {
   return Number.isNaN(date.valueOf()) ? "时间未知" : date.toLocaleString("zh-CN", { hour12: false });
 };
 
+const achievementName = item =>
+  item.display.name_zh || item.display.name_en || `成就 #${item.id}`;
+
+const achievementEnglishSubtitle = (item, primaryTitle) => {
+  const nameZh = String(item.display.name_zh || "").trim();
+  const nameEn = String(item.display.name_en || "").trim();
+  return nameZh && nameEn && nameEn !== String(primaryTitle).trim() ? nameEn : null;
+};
+
+const achievementCondition = item =>
+  item.display.unlock_condition_zh ||
+  item.display.unlock_condition_en ||
+  item.steam.description_en ||
+  "暂无解锁条件";
+
+const achievementReward = (item) =>
+  item.reward?.name_zh || item.reward?.name_en || "暂无奖励资料";
+
 async function api(path, options = {}) {
   const response = await fetch(path, options);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload?.error?.message || `请求失败（${response.status}）`);
+    const structuredErrors = Array.isArray(payload.errors)
+      ? payload.errors.filter((item) => typeof item === "string" && item.trim())
+      : [];
+    throw new Error(payload?.error?.message || structuredErrors.join("；") || `请求失败（${response.status}）`);
   }
   return payload;
 }
 
+function normalizeAchievementProgress(item) {
+  const source = item?.progress && typeof item.progress === "object"
+    ? item.progress
+    : item || {};
+  return {
+    steam_unlocked: typeof source.steam_unlocked === "boolean" ? source.steam_unlocked : null,
+    secret_unlocked: typeof source.secret_unlocked === "boolean" ? source.secret_unlocked : null,
+    unlocked_at: source.unlocked_at ?? null,
+    sync_warning: source.sync_warning === true,
+  };
+}
+
 function activeAchievements() {
-  const hasProgress = Boolean(model.state?.achievements?.length);
-  const source = hasProgress ? model.state.achievements : model.catalog.achievements;
-  return source.map((item) => ({
-    ...item,
-    steam_unlocked: hasProgress ? Boolean(item.steam_unlocked) : null,
-    status: hasProgress ? (item.steam_unlocked ? "unlocked" : "locked") : "unknown",
-  }));
+  const progressById = new Map((model.state?.achievements || []).map((item) => [
+    Number(item.id),
+    normalizeAchievementProgress(item),
+  ]));
+  return (model.catalog.achievements || []).map((item) => {
+    const progress = progressById.get(Number(item.id)) || normalizeAchievementProgress(null);
+    const steamUnlocked = progress.steam_unlocked;
+    return {
+      ...item,
+      progress,
+      steam_unlocked: steamUnlocked,
+      status: steamUnlocked === null ? "unknown" : (steamUnlocked ? "unlocked" : "locked"),
+    };
+  });
 }
 
 function relationItems(characterId) {
   return activeAchievements().filter((achievement) =>
-    (achievement.character_relations || []).some((relation) => relation.character_id === characterId));
+    (achievement.characters || []).some((relation) => relation.id === characterId));
 }
 
 function categoryLabel(categoryId) {
   return model.catalog.categories?.[categoryId]?.name_zh || categoryId;
+}
+
+function characterLabel(characterId) {
+  return model.catalog.characters.find((item) => item.id === characterId)?.name_zh || characterId;
 }
 
 function pageHeader(kicker, title, copy, aside = "") {
@@ -64,29 +115,127 @@ function pageHeader(kicker, title, copy, aside = "") {
   </section>`;
 }
 
+function progressLabel(value) {
+  if (value === null || value === undefined) return "尚未读取";
+  return value ? "已解锁" : "未解锁";
+}
+
+function safeSourceUrl(value) {
+  try {
+    const url = new URL(String(value));
+    return ["http:", "https:"].includes(url.protocol) ? url.href : null;
+  } catch {
+    return null;
+  }
+}
+
+function provenanceMarkup(item) {
+  const entries = Object.entries(item.sources || {}).flatMap(([field, claims]) =>
+    (Array.isArray(claims) ? claims : []).map((claim) => ({ field, ...claim })));
+  if (!entries.length) return `<p class="detail-empty">没有可显示的来源记录。</p>`;
+  return `<ul class="evidence-list">${entries.map((entry) => {
+    const url = safeSourceUrl(entry.source_url);
+    const source = escapeHtml(entry.source || entry.origin || "未知来源");
+    const sourceMarkup = url
+      ? `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${source}</a>`
+      : `<span>${source}</span>`;
+    return `<li><code>${escapeHtml(entry.field)}</code>${sourceMarkup}<time>${escapeHtml(formatTime(entry.retrieved_at))}</time></li>`;
+  }).join("")}</ul>`;
+}
+
+function diagnosticsMarkup(title, entries, emptyText) {
+  if (!Array.isArray(entries) || !entries.length) {
+    return `<section class="detail-block"><h3>${escapeHtml(title)}</h3><p class="detail-empty">${escapeHtml(emptyText)}</p></section>`;
+  }
+  return `<section class="detail-block warning-block"><h3>${escapeHtml(title)}</h3><ul>${entries.map((entry) => {
+    const detail = entry.value === undefined
+      ? entry.reason
+      : `${entry.source || "未知来源"}：${typeof entry.value === "string" ? entry.value : JSON.stringify(entry.value)}`;
+    return `<li><code>${escapeHtml(entry.field || "未标注字段")}</code> ${escapeHtml(detail || "未说明")}</li>`;
+  }).join("")}</ul></section>`;
+}
+
+function catalogCompletenessSummary(result) {
+  const counts = Object.values(result.completeness || {})
+    .filter((value) => Number.isInteger(value) && value >= 0);
+  if (!counts.length) return "未知";
+  const complete = counts.filter((value) => value >= result.achievement_count).length;
+  return `${complete}/${counts.length} 个字段完整，最低 ${Math.min(...counts)}/${result.achievement_count}`;
+}
+
+function catalogSourceFailures(result) {
+  const notices = [...(result.errors || []), ...(result.warnings || [])]
+    .filter((item) => typeof item === "string" && /failed|failure|error|403|失败|网络/i.test(item));
+  return notices.length ? notices.join("；") : "无";
+}
+
+function catalogUpdateSummary(result) {
+  return `更新时间：${formatTime(result.updated_at)} · 成就数量：${result.achievement_count} · 字段完整度：${catalogCompletenessSummary(result)} · 提醒：${result.warnings?.length || 0} 条 · 来源失败：${catalogSourceFailures(result)}`;
+}
+
+function openAchievementDetails(achievementId) {
+  const item = activeAchievements().find((achievement) => Number(achievement.id) === Number(achievementId));
+  if (!item) return;
+  const secretMapping = item.secret?.status === "verified";
+  const secretState = secretMapping
+    ? progressLabel(item.progress?.secret_unlocked)
+    : `映射${item.secret?.status === "conflict" ? "有冲突" : "未验证"}`;
+  const syncWarning = item.progress?.sync_warning
+    ? `<p class="sync-warning">Steam 与游戏存档的状态不一致，请检查云同步或重新读取进度。</p>`
+    : "";
+  achievementDetailsTitle.textContent = achievementName(item);
+  achievementDetailsContent.innerHTML = `${syncWarning}
+    <dl class="achievement-definitions">
+      <div><dt>成就 ID</dt><dd><code>#${escapeHtml(item.id)}</code></dd></div>
+      <div><dt>英文名</dt><dd>${escapeHtml(item.display.name_en || "未提供")}</dd></div>
+      <div><dt>解锁条件</dt><dd>${escapeHtml(achievementCondition(item))}</dd></div>
+      <div><dt>奖励</dt><dd>${escapeHtml(achievementReward(item))}</dd></div>
+      <div><dt>Steam 状态</dt><dd>${escapeHtml(progressLabel(item.progress?.steam_unlocked))}</dd></div>
+      <div><dt>Secret 状态</dt><dd>${escapeHtml(secretState)}</dd></div>
+      <div><dt>解锁时间</dt><dd><time>${escapeHtml(formatTime(item.progress?.unlocked_at))}</time></dd></div>
+      <div><dt>DLC / 版本</dt><dd>${escapeHtml(item.dlc || "未标注")}</dd></div>
+    </dl>
+    <section class="detail-block"><h3>字段来源</h3>${provenanceMarkup(item)}</section>
+    ${diagnosticsMarkup("缺失资料", item.missing, "没有已记录的缺失字段。")}
+    ${diagnosticsMarkup("来源冲突", item.conflicts, "没有已记录的来源冲突。")}`;
+  achievementDetails.showModal();
+}
+
 function achievementList(items) {
   if (!items.length) return `<div class="empty-state">这里暂时没有符合条件的成就。</div>`;
   return `<div class="achievement-list">${items.map((item) => {
     const unlocked = item.status === "unlocked";
     const known = item.status !== "unknown";
-    const unlockCondition = item.unlock_condition_zh || item.unlock_condition_en || item.description;
-    const tags = (item.categories || []).map((id) =>
-      `<span class="tag">${escapeHtml(categoryLabel(id))}</span>`).join("");
+    const unlockCondition = achievementCondition(item);
+    const primaryName = achievementName(item);
+    const englishSubtitle = achievementEnglishSubtitle(item, primaryName);
+    const relatedCharacters = item.characters || [];
+    const characterTags = relatedCharacters.slice(0, 3).map((relation) =>
+      `<span class="tag tag-character">角色 · ${escapeHtml(characterLabel(relation.id))}</span>`).join("") +
+      (relatedCharacters.length > 3
+        ? `<span class="tag tag-character">另 ${relatedCharacters.length - 3} 名角色</span>`
+        : "");
+    const tags = characterTags + (item.categories || []).map((id) =>
+      `<span class="tag">${escapeHtml(categoryLabel(id))}</span>`).join("") +
+      (item.dlc ? `<span class="tag tag-dlc">${escapeHtml(item.dlc)}</span>` : "");
     return `<article class="achievement-row ${escapeHtml(item.status)}">
+      <img class="achievement-icon" src="${escapeHtml(item.icon?.path || "assets/achievements/fallback.svg")}" alt="" width="40" height="40" loading="lazy">
       <span class="status-mark" aria-label="${known ? (unlocked ? "已解锁" : "未解锁") : "尚未读取"}">${known ? (unlocked ? "✓" : "○") : "·"}</span>
-      <div>
-        <h3>${escapeHtml(item.name_zh || item.name_en)}</h3>
-        <p>${escapeHtml(unlockCondition || "暂无解锁说明")}</p>
+      <div class="achievement-copy">
+        <h3>${escapeHtml(primaryName)}</h3>
+        ${englishSubtitle ? `<p class="achievement-name-en" lang="en">${escapeHtml(englishSubtitle)}</p>` : ""}
+        <p>${escapeHtml(unlockCondition)}</p>
+        <p class="achievement-reward"><span>奖励</span>${escapeHtml(achievementReward(item))}</p>
         <div class="tag-list">${tags}</div>
       </div>
-      <span class="achievement-id">#${escapeHtml(item.id)}</span>
+      <div class="achievement-side"><span class="achievement-id">#${escapeHtml(item.id)}</span><button class="text-button achievement-open" type="button" data-achievement-id="${escapeHtml(item.id)}">查看详情</button></div>
     </article>`;
   }).join("")}</div>`;
 }
 
 function nextTarget() {
   const locked = activeAchievements().filter((item) => !item.steam_unlocked);
-  return locked.find((item) => (item.character_relations || []).length) || locked[0] || null;
+  return locked.find((item) => (item.characters || []).length) || locked[0] || null;
 }
 
 function renderCharacters() {
@@ -94,13 +243,13 @@ function renderCharacters() {
   const hasProgress = Boolean(model.state?.achievements?.length);
   const unlocked = achievements.filter((item) => item.steam_unlocked).length;
   const target = hasProgress ? nextTarget() : null;
-  const targetRelation = target?.character_relations?.[0];
-  const targetCharacter = model.catalog.characters.find((item) => item.id === targetRelation?.character_id);
+  const targetRelation = target?.characters?.[0];
+  const targetCharacter = model.catalog.characters.find((item) => item.id === targetRelation?.id);
   const aside = `<div class="total-progress"><strong>${hasProgress ? unlocked : "—"}</strong> / ${achievements.length || "—"}<br>STEAM ACHIEVEMENTS</div>`;
   const note = !hasProgress
     ? `<section class="next-note" aria-label="首次更新"><span class="note-pin" aria-hidden="true"></span><div><small>LOCAL PROGRESS</small><strong>尚未读取进度</strong></div><button class="text-button" type="button" data-open-update>选择账户与存档 →</button></section>`
     : target
-    ? `<section class="next-note" aria-label="下一局建议"><span class="note-pin" aria-hidden="true"></span><div><small>NEXT RUN</small><strong>${escapeHtml(targetCharacter?.name_zh || "下一目标")} · ${escapeHtml(target.name_zh || target.name_en)}</strong></div>${targetCharacter ? `<button class="text-button" type="button" data-character="${escapeHtml(targetCharacter.id)}">查看角色目标 →</button>` : ""}</section>`
+    ? `<section class="next-note" aria-label="下一局建议"><span class="note-pin" aria-hidden="true"></span><div><small>NEXT RUN</small><strong>${escapeHtml(targetCharacter?.name_zh || "下一目标")} · ${escapeHtml(achievementName(target))}</strong></div>${targetCharacter ? `<button class="text-button" type="button" data-character="${escapeHtml(targetCharacter.id)}">查看角色目标 →</button>` : ""}</section>`
     : `<section class="next-note"><span class="note-pin" aria-hidden="true"></span><div><small>NEXT RUN</small><strong>当前目录中的成就均已完成</strong></div></section>`;
   const characterRows = model.catalog.characters.map((character, index) => {
     const related = relationItems(character.id);
@@ -141,8 +290,8 @@ function renderCharacter(characterId) {
     const status = document.querySelector("#character-status-filter").value;
     const relationType = document.querySelector("#relation-filter").value;
     const filtered = items.filter((item) => {
-      const relationMatch = relationType === "all" || (item.character_relations || []).some(
-        (relation) => relation.character_id === characterId && relation.type === relationType);
+      const relationMatch = relationType === "all" || (item.characters || []).some(
+        (relation) => relation.id === characterId && relation.relation === relationType);
       return (status === "all" || item.status === status) && relationMatch;
     });
     document.querySelector("#character-results").innerHTML = achievementList(filtered);
@@ -182,7 +331,7 @@ function renderAll() {
     const status = document.querySelector("#status-filter").value;
     const category = document.querySelector("#category-filter").value;
     const items = activeAchievements().filter((item) => {
-      const haystack = `${item.id} ${item.name_zh || ""} ${item.name_en || ""} ${item.description || ""} ${item.unlock_condition_zh || ""} ${item.unlock_condition_en || ""}`.toLocaleLowerCase();
+      const haystack = `${item.id} ${item.display.name_zh || ""} ${item.display.name_en || ""} ${item.steam.description_en || ""} ${item.display.unlock_condition_zh || ""} ${item.display.unlock_condition_en || ""} ${item.reward?.name_zh || ""} ${item.reward?.name_en || ""}`.toLocaleLowerCase();
       return (!query || haystack.includes(query))
         && (status === "all" || item.status === status)
         && (category === "all" || (item.categories || []).includes(category));
@@ -221,6 +370,13 @@ function fillSlots() {
   updateButton.disabled = !account?.slots?.length;
 }
 
+function renderCatalogStatus() {
+  const status = model.catalogStatus;
+  catalogUpdatedAt.textContent = status?.updated_at
+    ? `上次更新：${formatTime(status.updated_at)} · ${status.achievement_count || 0} 项`
+    : "尚未读取更新时间";
+}
+
 function fillUpdateDialog() {
   accountSelect.innerHTML = model.accounts.length
     ? model.accounts.map((account) => `<option value="${escapeHtml(account.id)}">账户 ${escapeHtml(account.id)}</option>`).join("")
@@ -229,6 +385,7 @@ function fillUpdateDialog() {
   fillSlots();
   if (model.slot) slotSelect.value = String(model.slot);
   updateStatus.textContent = model.accounts.length ? "" : "请确认 Steam 已安装且本机存在 AppID 250900 的数据。";
+  renderCatalogStatus();
 }
 
 function openUpdateDialog() {
@@ -255,9 +412,14 @@ async function loadSnapshot() {
 async function boot() {
   statusRoot.textContent = "正在读取本地目录…";
   try {
-    const [accounts, catalog] = await Promise.all([api("/api/accounts"), api("/api/catalog")]);
+    const [accounts, catalog, catalogStatus] = await Promise.all([
+      api("/api/accounts"),
+      api("/api/catalog"),
+      api("/api/catalog/status"),
+    ]);
     model.accounts = accounts.accounts || [];
     model.catalog = catalog;
+    model.catalogStatus = catalogStatus;
     const account = model.accounts[0];
     if (account?.slots?.length) {
       const slot = [...account.slots].sort((a, b) => new Date(b.modified_at) - new Date(a.modified_at))[0];
@@ -265,7 +427,7 @@ async function boot() {
       model.slot = slot.number;
       await loadSnapshot();
     }
-    statusRoot.textContent = catalog.warning || "";
+    statusRoot.textContent = (catalog.warnings || []).join("；");
     slotStatus.textContent = model.state
       ? `档位 ${model.slot} · ${formatTime(model.state.generated_at)}`
       : "等待首次更新";
@@ -285,7 +447,9 @@ viewRoot.addEventListener("click", (event) => {
   const category = event.target.closest("[data-category]");
   const viewLink = event.target.closest("[data-view-link]");
   const openUpdate = event.target.closest("[data-open-update]");
+  const achievement = event.target.closest("[data-achievement-id]");
   if (openUpdate) openUpdateDialog();
+  else if (achievement) openAchievementDetails(achievement.dataset.achievementId);
   else if (character) location.hash = `character/${character.dataset.character}`;
   else if (category) location.hash = `category/${category.dataset.category}`;
   else if (viewLink) location.hash = viewLink.dataset.viewLink;
@@ -301,7 +465,35 @@ viewRoot.addEventListener("change", (event) => {
 document.querySelector("#open-update").addEventListener("click", openUpdateDialog);
 document.querySelector("#close-update").addEventListener("click", () => dialog.close());
 document.querySelector("#cancel-update").addEventListener("click", () => dialog.close());
+document.querySelectorAll("[data-close-achievement]").forEach((button) =>
+  button.addEventListener("click", () => achievementDetails.close()));
 accountSelect.addEventListener("change", fillSlots);
+catalogUpdate.addEventListener("click", async () => {
+  catalogUpdate.disabled = true;
+  catalogUpdateResult.textContent = "正在更新固定来源与本地图标…";
+  try {
+    const result = await api("/api/catalog/update", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
+    const refreshedCatalog = await api("/api/catalog");
+    model.catalog = refreshedCatalog;
+    model.catalogStatus = {
+      updated_at: result.updated_at,
+      achievement_count: result.achievement_count,
+      completeness: result.completeness,
+      warnings: result.warnings,
+    };
+    renderCatalogStatus();
+    catalogUpdateResult.textContent = catalogUpdateSummary(result);
+    route();
+  } catch (error) {
+    catalogUpdateResult.textContent = error.message;
+  } finally {
+    catalogUpdate.disabled = false;
+  }
+});
 document.querySelector("#update-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const accountId = accountSelect.value;

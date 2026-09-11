@@ -1,5 +1,6 @@
 # Local agent and design-session state
 .superpowers/
+.worktrees/
 .agents/
 .codex/
 AGENTS.md
@@ -7,6 +8,10 @@ AGENTS.md
 # Personal progress snapshots and raw game data
 data/profiles/
 data/raw/
+data/catalog/*.candidate.json
+data/catalog/*.tmp
+data/catalog/downloads/
+web/assets/achievements/*.tmp
 ResourceExtractor_log.txt
 ui-check*.png
 rep+persistentgamedata*.dat

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Sequence
 
 from .readers.steam_stats import AchievementDefinition
 
@@ -82,14 +82,22 @@ def _contains(text: str, *phrases: str) -> bool:
     return any(phrase in text for phrase in phrases)
 
 
-def _character_relations(
-    name: str,
-    description: str,
-    unlock_condition: str = "",
+def extract_character_relations(
+    condition_zh: str,
+    condition_en: str,
+    name_en: str = "",
+    description_en: str = "",
 ) -> list[dict[str, str]]:
-    name_lower = name.casefold().strip()
-    description_text = description.casefold()
-    condition_text = (unlock_condition or description).casefold()
+    """Extract character relationships from retained achievement metadata."""
+
+    condition_text = condition_en.casefold()
+    name_lower = name_en.casefold().strip()
+    description_text = description_en.casefold()
+    chinese_text = re.sub(
+        r"\{\{[^{}|]+\|([^{}]+)\}\}",
+        lambda match: match.group(1).split("|")[-1].strip(),
+        condition_zh,
+    )
     relations: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     unlocking = _contains(
@@ -100,10 +108,14 @@ def _character_relations(
         key = (character_id, relation_type)
         if key not in seen:
             seen.add(key)
-            relations.append({"character_id": character_id, "type": relation_type})
+            relations.append({"id": character_id, "relation": relation_type})
 
-    all_characters = _contains(condition_text, "all characters", "every character")
-    all_normal = "all non-tainted characters" in condition_text
+    all_characters = _contains(condition_text, "all characters", "every character") or _contains(
+        chinese_text, "所有角色", "全部角色"
+    )
+    all_normal = "all non-tainted characters" in condition_text or _contains(
+        chinese_text, "所有非堕化角色", "所有表角色"
+    )
     for character in CHARACTERS:
         aliases = character["aliases"]
         if unlocking and name_lower == character["unlock_title"]:
@@ -111,9 +123,12 @@ def _character_relations(
         if (all_characters or (all_normal and not character["tainted"])):
             add(str(character["id"]), "related_character")
         elif any(
-            re.search(rf"\b(?:as|with)\s+{re.escape(alias)}(?:\b|$)", condition_text)
+            re.search(rf"\b(?:as|with)\s+{re.escape(alias)}(?!\w)", condition_text)
             for alias in aliases
         ):
+            add(str(character["id"]), "required_character")
+        name_zh = str(character["name_zh"])
+        if re.search(rf"(?:用|使用|作为|操纵)\s*{re.escape(name_zh)}", chinese_text):
             add(str(character["id"]), "required_character")
         if any(
             re.search(
@@ -126,13 +141,11 @@ def _character_relations(
     return relations
 
 
-def _categories(
-    name: str,
-    description: str,
-    unlock_condition: str,
-    relations: list[dict[str, str]],
+def classify_achievement(
+    values: Mapping[str, object],
+    relations: Sequence[Mapping[str, str]],
 ) -> list[str]:
-    text = f"{name} {description} {unlock_condition}".casefold()
+    text = " ".join(str(value) for value in values.values() if value).casefold()
     result: list[str] = []
     if relations:
         result.append("character")
@@ -181,8 +194,11 @@ def build_catalog(
     for definition in definitions:
         override = overrides.get(definition.id, {})
         unlock_condition = str(override.get("unlock_condition_en", ""))
-        relations = _character_relations(
-            definition.name, definition.description, unlock_condition
+        relations = extract_character_relations(
+            "",
+            unlock_condition or definition.description,
+            definition.name,
+            definition.description,
         )
         sources: list[dict[str, object]] = [{
             "type": "steam_schema",
@@ -198,10 +214,18 @@ def build_catalog(
             "description": definition.description,
             "unlock_condition_en": unlock_condition or definition.description,
             "unlock_condition_zh": unlock_condition or definition.description,
-            "categories": _categories(
-                definition.name, definition.description, unlock_condition, relations
+            "categories": classify_achievement(
+                {
+                    "name_en": definition.name,
+                    "steam_description_en": definition.description,
+                    "unlock_condition_en": unlock_condition,
+                },
+                relations,
             ),
-            "character_relations": relations,
+            "character_relations": [
+                {"character_id": relation["id"], "type": relation["relation"]}
+                for relation in relations
+            ],
             "icon": definition.icon,
             "icon_locked": definition.icon_locked,
             "status": "unknown",

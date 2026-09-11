@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Achievement icon unavailable">
+  <rect width="64" height="64" rx="8" fill="#28262b"/>
+  <path d="M20 18h24v28H20z" fill="#49454f"/>
+  <path d="M24 22h16v12H24z" fill="#77717f"/>
+  <circle cx="28" cy="27" r="2.5" fill="#c9c2d0"/>
+  <path d="m24 34 5-5 4 4 3-3 4 4v-12H24z" fill="#a7a0af"/>
+  <path d="M26 40h12" stroke="#c9c2d0" stroke-width="3" stroke-linecap="round"/>
+</svg>

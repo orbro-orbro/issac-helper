@@ -11,12 +11,11 @@ from pathlib import Path
 import tempfile
 from typing import Iterable, Mapping
 
-from .catalog import build_catalog
+from .catalog_store import CatalogLoadError, load_catalog
 from .discovery import Selection
 from .readers.binary_kv import parse_binary_keyvalues
 from .readers.isaac_save import IsaacSaveError, parse_secrets
 from .readers.steam_stats import extract_schema, extract_unlocked
-from .wiki_catalog import load_wiki_overrides
 
 
 class SnapshotError(RuntimeError):
@@ -76,30 +75,57 @@ def load_snapshot(
 
 def merge_progress(
     catalog: Iterable[Mapping[str, object]],
-    unlocked: Mapping[int, datetime | None],
-    secret_ids: Iterable[int],
-    secret_id_map: Mapping[int, int] | None = None,
-) -> tuple[list[dict[str, object]], dict[str, int], list[dict[str, object]]]:
-    secrets = set(secret_ids)
+    unlocked: Mapping[tuple[int, int], datetime | None],
+    secret_ids: Iterable[int] | None,
+) -> tuple[
+    list[dict[str, object]],
+    dict[str, int | None],
+    list[dict[str, object]],
+]:
+    secrets = set(secret_ids) if secret_ids is not None else None
     items: list[dict[str, object]] = []
     differences: list[dict[str, object]] = []
     for source_item in catalog:
         item = deepcopy(dict(source_item))
         achievement_id = int(item["id"])
-        steam_unlocked = achievement_id in unlocked
+        steam = item.get("steam")
+        group = steam.get("group") if isinstance(steam, Mapping) else None
+        bit = steam.get("bit") if isinstance(steam, Mapping) else None
+        steam_key = (
+            (group, bit)
+            if isinstance(group, int)
+            and not isinstance(group, bool)
+            and isinstance(bit, int)
+            and not isinstance(bit, bool)
+            else None
+        )
+        steam_unlocked = steam_key in unlocked if steam_key is not None else False
+        secret = item.get("secret")
         mapped_secret_id = (
-            secret_id_map.get(achievement_id) if secret_id_map is not None else None
+            secret.get("id")
+            if isinstance(secret, Mapping)
+            and secret.get("status") == "verified"
+            and isinstance(secret.get("id"), int)
+            and not isinstance(secret.get("id"), bool)
+            else None
         )
         secret_unlocked = (
-            mapped_secret_id in secrets if mapped_secret_id is not None else None
+            mapped_secret_id in secrets
+            if mapped_secret_id is not None and secrets is not None
+            else None
         )
-        unlocked_at = unlocked.get(achievement_id)
-        item["steam_unlocked"] = steam_unlocked
-        item["secret_unlocked"] = secret_unlocked
-        item["unlocked_at"] = unlocked_at.isoformat() if unlocked_at else None
-        item["status"] = "unlocked" if steam_unlocked else "locked"
+        unlocked_at = unlocked.get(steam_key) if steam_key is not None else None
+        states_disagree = (
+            secret_unlocked is not None and steam_unlocked != secret_unlocked
+        )
+        item["progress"] = {
+            "steam_unlocked": steam_unlocked,
+            "secret_unlocked": secret_unlocked,
+            "unlocked_at": unlocked_at.isoformat() if unlocked_at else None,
+            "sync_warning": states_disagree,
+        }
         items.append(item)
-        if secret_unlocked is not None and steam_unlocked != secret_unlocked:
+        if states_disagree:
             differences.append({
                 "id": achievement_id,
                 "steam_unlocked": steam_unlocked,
@@ -107,8 +133,10 @@ def merge_progress(
             })
     summary = {
         "total": len(items),
-        "steam_unlocked": len(unlocked),
-        "game_secrets_unlocked": len(secrets),
+        "steam_unlocked": sum(
+            bool(item["progress"]["steam_unlocked"]) for item in items
+        ),
+        "game_secrets_unlocked": len(secrets) if secrets is not None else None,
         "sync_difference_count": len(differences),
     }
     return items, summary, differences
@@ -141,6 +169,8 @@ def _source_record(
 def build_snapshot(
     selection: Selection,
     output_root: Path,
+    *,
+    catalog_path: Path | None = None,
 ) -> dict[str, object]:
     account = selection.account
     missing = [
@@ -154,8 +184,13 @@ def build_snapshot(
     stats_bytes, stats_stat = _read_stable(account.stats_path)
     save_bytes, save_stat = _read_stable(selection.slot.save_path)
     definitions = extract_schema(parse_binary_keyvalues(schema_bytes))
-    unlocked = extract_unlocked(parse_binary_keyvalues(stats_bytes), definitions)
-    secret_ids: frozenset[int] = frozenset()
+    unlocked_by_id = extract_unlocked(parse_binary_keyvalues(stats_bytes), definitions)
+    unlocked = {
+        (definition.group, definition.bit): unlocked_by_id[definition.id]
+        for definition in definitions
+        if definition.id in unlocked_by_id
+    }
+    secret_ids: frozenset[int] | None = None
     secret_state: dict[str, object]
     try:
         secrets = parse_secrets(save_bytes)
@@ -170,21 +205,36 @@ def build_snapshot(
         secret_state = {
             "format": None,
             "count": None,
-            "unlocked_ids": [],
+            "unlocked_ids": None,
             "error": str(exc),
         }
 
-    items, summary, differences = merge_progress(
-        build_catalog(definitions, overrides=load_wiki_overrides()), unlocked, secret_ids
+    active_catalog_path = Path(catalog_path) if catalog_path is not None else (
+        Path(__file__).resolve().parent.parent / "data" / "catalog" / "achievements.json"
     )
+    try:
+        active_catalog = load_catalog(active_catalog_path)
+    except CatalogLoadError as exc:
+        raise SnapshotError(f"achievement catalog unavailable: {exc}") from exc
+    catalog_items = active_catalog.get("achievements")
+    if not isinstance(catalog_items, list):
+        raise SnapshotError("achievement catalog has no achievement list")
+    items, summary, differences = merge_progress(catalog_items, unlocked, secret_ids)
     target = snapshot_path(output_root, account.id, selection.slot.number)
     previous = load_snapshot(output_root, account.id, selection.slot.number)
     previous_unlocked = {
         int(item["id"])
         for item in (previous or {}).get("achievements", [])
-        if isinstance(item, dict) and item.get("steam_unlocked")
+        if isinstance(item, dict)
+        and (
+            (
+                isinstance(item.get("progress"), dict)
+                and item["progress"].get("steam_unlocked")
+            )
+            or item.get("steam_unlocked")
+        )
     }
-    newly_unlocked = sorted(set(unlocked) - previous_unlocked) if previous else []
+    newly_unlocked = sorted(set(unlocked_by_id) - previous_unlocked) if previous else []
     now = datetime.now(tz=timezone.utc).isoformat()
     payload: dict[str, object] = {
         "schema_version": 1,

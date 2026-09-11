@@ -31,32 +31,64 @@
   </main>
 
   <dialog id="update-dialog" aria-labelledby="update-title">
-    <form id="update-form" method="dialog">
+    <div class="dialog-shell">
       <div class="dialog-head">
         <div>
           <p class="eyebrow">只读同步</p>
-          <h2 id="update-title">更新本地进度</h2>
+          <h2 id="update-title">更新本地数据</h2>
         </div>
         <button class="icon-button" type="button" id="close-update" aria-label="关闭">×</button>
       </div>
-      <p class="dialog-copy">选择 Steam 账户和游戏存档。系统只读取原文件，结果保存在项目的本地数据目录。</p>
-      <div class="field">
-        <label for="account-select">Steam 账户</label>
-        <select id="account-select" name="account_id"></select>
+
+      <section class="update-section" aria-labelledby="progress-update-title">
+        <h3 id="progress-update-title">个人进度</h3>
+        <p class="dialog-copy">选择 Steam 账户和游戏存档。系统只读取原文件，结果保存在项目的本地数据目录。</p>
+        <form id="update-form" method="dialog">
+          <div class="field">
+            <label for="account-select">Steam 账户</label>
+            <select id="account-select" name="account_id"></select>
+          </div>
+          <div class="field">
+            <label for="slot-select">游戏存档</label>
+            <select id="slot-select" name="slot"></select>
+          </div>
+          <div class="read-sources" aria-label="将读取的数据">
+            <span>Steam 成就缓存</span><span>Repentance+ 存档</span><span>Steam Schema</span>
+          </div>
+          <p id="update-status" class="dialog-status" role="status" aria-live="polite"></p>
+          <div class="dialog-actions">
+            <button type="button" class="quiet-button" id="cancel-update">取消</button>
+            <button type="submit" class="primary-button" id="run-update">读取并更新</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="update-section" aria-labelledby="catalog-update-title">
+        <h3 id="catalog-update-title">成就资料</h3>
+        <p class="dialog-copy">从固定来源更新名称、解锁条件、奖励和本地图标，不会更改账户或存档选择。</p>
+        <p id="catalog-updated-at" class="catalog-updated-at">尚未读取更新时间</p>
+        <div class="dialog-actions catalog-actions">
+          <button id="catalog-update" type="button" class="quiet-button">更新成就资料</button>
+        </div>
+        <p id="catalog-update-result" class="dialog-status" role="status" aria-live="polite"></p>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="achievement-details" aria-labelledby="achievement-details-title">
+    <div class="dialog-shell details-shell">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">成就证据</p>
+          <h2 id="achievement-details-title"></h2>
+        </div>
+        <button class="icon-button" type="button" data-close-achievement="" aria-label="关闭成就详情">×</button>
       </div>
-      <div class="field">
-        <label for="slot-select">游戏存档</label>
-        <select id="slot-select" name="slot"></select>
-      </div>
-      <div class="read-sources" aria-label="将读取的数据">
-        <span>Steam 成就缓存</span><span>Repentance+ 存档</span><span>Steam Schema</span>
-      </div>
-      <p id="update-status" class="dialog-status" role="status"></p>
+      <div id="achievement-details-content"></div>
       <div class="dialog-actions">
-        <button type="button" class="quiet-button" id="cancel-update">取消</button>
-        <button type="submit" class="primary-button" id="run-update">读取并更新</button>
+        <button type="button" class="quiet-button" data-close-achievement="">关闭</button>
       </div>
-    </form>
+    </div>
   </dialog>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
